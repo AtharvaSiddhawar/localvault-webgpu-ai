@@ -1,10 +1,10 @@
-
 name: Verify and Deploy LocalVault AI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,18 +13,17 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: github-pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify-and-build:
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Setup Node.js 24
+      - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -32,31 +31,35 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Run regression tests
-        run: npm test
+      - name: Check syntax and run regression tests
+        run: npm run check
 
       - name: Build production application
         run: npm run build
 
-      - name: Verify build output
-        run: test -f dist/index.html
+      - name: Verify production artifact
+        run: |
+          test -s dist/index.html
+          test -s dist/coi-serviceworker.js
+          find dist/assets -type f | grep -q .
 
       - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: verify-and-build
     runs-on: ubuntu-24.04
-
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
