@@ -1,41 +1,39 @@
 {
   "name": "localvault-webgpu-ai",
   "version": "2.0.0",
-  "description": "Zero-Cloud Client-Side AI Developer Suite via WebGPU: 4-Layer PII Firewall (Regex + Luhn + Shannon Entropy + WebGPU SLM), AES-256-GCM Encrypted Vault, Runtime Network Air-Gap, and Offline Whisper Audio Note Structurer.",
+  "description": "LocalVault AI v2.0 — 100% browser and terminal-based AI developer utility suite powered by WebGPU and Transformers.js v3.",
   "type": "module",
+  "private": false,
   "bin": {
     "localvault": "./bin/localvault-cli.mjs"
   },
   "scripts": {
-    "dev": "vite --port 5173 --open",
+    "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --port 4173",
+    "preview": "vite preview",
     "test": "node tests/verify.mjs",
     "cli": "node bin/localvault-cli.mjs"
   },
   "keywords": [
     "webgpu",
     "transformers-js",
-    "pii-scrubber",
-    "secret-scanner",
-    "shannon-entropy",
-    "llm-firewall",
-    "whisper-webgpu",
-    "smollm2",
-    "qwen2.5",
-    "zero-cloud",
     "privacy",
-    "client-side-ai"
+    "pii-scrubber",
+    "aes-256-gcm",
+    "zero-cloud",
+    "local-ai",
+    "whisper",
+    "smollm2"
   ],
-  "author": "Open Source Contributor",
+  "author": "Atharva Mahendra Siddhawar",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@huggingface/transformers": "^3.3.3"
   },
   "devDependencies": {
     "vite": "^6.0.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }
