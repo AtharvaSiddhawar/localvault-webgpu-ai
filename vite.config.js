@@ -1,34 +1,36 @@
 import { defineConfig } from 'vite';
 
+const COOP_COEP_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
+  'Cross-Origin-Resource-Policy': 'cross-origin'
+};
+
 export default defineConfig({
   base: './',
-  publicDir: 'public',
-  build: {
-    target: 'esnext',
-    outDir: 'dist',
-    sourcemap: false,
-    rollupOptions: {
-      output: {
-        manualChunks: undefined
-      }
-    }
+  server: {
+    port: 5173,
+    headers: COOP_COEP_HEADERS
+  },
+  preview: {
+    port: 4173,
+    headers: COOP_COEP_HEADERS
   },
   worker: {
     format: 'es'
   },
-  optimizeDeps: {
-    exclude: ['@huggingface/transformers']
-  },
-  server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'credentialless'
+  build: {
+    target: 'esnext',
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: false,
+    rollupOptions: {
+      external: []
     }
   },
-  preview: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'credentialless'
+  optimizeDeps: {
+    esbuildOptions: {
+      target: 'esnext'
     }
   }
 });
