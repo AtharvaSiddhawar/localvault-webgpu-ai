@@ -1,10 +1,11 @@
-
 {
   "name": "localvault-webgpu-ai",
-  "version": "2.0.0",
-  "description": "A local-first browser and terminal developer toolkit for PII scrubbing, encrypted vault storage, request monitoring, audio utilities and local AI inference.",
-  "type": "module",
+  "version": "2.1.0",
   "private": false,
+  "type": "module",
+  "description": "Local-first browser privacy toolkit with PII scrubbing, AES-GCM vault storage, audio utilities and optional local model inference.",
+  "license": "MIT",
+  "author": "Atharva Mahendra Siddhawar",
   "bin": {
     "localvault": "./bin/localvault-cli.mjs"
   },
@@ -13,7 +14,17 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node tests/verify.mjs",
+    "check": "node --check src/main.js && node --check src/worker.js && node --check bin/localvault-cli.mjs && node tests/verify.mjs",
     "cli": "node bin/localvault-cli.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.3.3"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
   },
   "keywords": [
     "webgpu",
@@ -22,18 +33,7 @@
     "pii-scrubber",
     "aes-256-gcm",
     "local-ai",
-    "whisper",
-    "smollm2"
-  ],
-  "author": "Atharva Mahendra Siddhawar",
-  "license": "MIT",
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "dependencies": {
-    "@huggingface/transformers": "^3.3.3"
-  },
-  "devDependencies": {
-    "vite": "^6.0.0"
-  }
+    "audio",
+    "developer-tools"
+  ]
 }
