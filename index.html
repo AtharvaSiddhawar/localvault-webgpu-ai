@@ -1,34 +1,61 @@
+
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LocalVault AI v2.0 — Zero-Cloud Client-Side AI Developer Suite</title>
+
+  <meta name="theme-color" content="#0b0f17" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="referrer" content="no-referrer" />
+
+  <meta
+    name="description"
+    content="LocalVault AI is a local-first developer privacy toolkit with PII scrubbing, encrypted vault storage, browser-side request monitoring, audio utilities and local model inference."
+  />
+
+  <title>LocalVault AI v2.0 — Local-First Developer Toolkit</title>
+
+  <!-- Cross-origin isolation helper for supported deployments. -->
   <script src="./coi-serviceworker.js"></script>
-  <script type="importmap">
-    {
-      "imports": {
-        "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/+esm"
-      }
-    }
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
   <link rel="stylesheet" href="./src/styles.css" />
 </head>
+
 <body>
   <header class="lv-header">
     <div class="lv-brand">
-      <span class="lv-logo-badge">LV</span>
+      <span class="lv-logo-badge" aria-hidden="true">LV</span>
+
       <div>
-        <h1>LocalVault AI <span class="lv-version">v2.0</span></h1>
-        <p class="lv-subtitle">100% Browser &amp; Terminal WebGPU Developer Suite · Zero Cloud · Zero Exfiltration</p>
+        <h1>
+          LocalVault AI
+          <span class="lv-version">v2.0</span>
+        </h1>
+
+        <p class="lv-subtitle">
+          Local-first developer privacy toolkit · Browser-side processing
+        </p>
       </div>
     </div>
+
     <div class="lv-status-bar">
-      <span id="webgpu-badge" class="status-pill status-checking">WebGPU: Checking…</span>
-      <span id="coi-badge" class="status-pill status-checking">COI: Checking…</span>
+      <span
+        id="webgpu-badge"
+        class="status-pill status-checking"
+        role="status"
+      >
+        WebGPU: Checking…
+      </span>
+
+      <span
+        id="coi-badge"
+        class="status-pill status-checking"
+        role="status"
+      >
+        COI: Checking…
+      </span>
+
       <label class="airgap-switch">
         <input type="checkbox" id="airgap-toggle" />
         <span>Strict Air-Gap Lockdown</span>
@@ -36,117 +63,420 @@
     </div>
   </header>
 
-  <nav class="lv-tabs" role="tablist">
-    <button class="lv-tab active" data-tab="tab-pii" role="tab" aria-selected="true">1. 4-Layer PII &amp; Secret Firewall</button>
-    <button class="lv-tab" data-tab="tab-audio" role="tab" aria-selected="false">2. Offline Audio &amp; Note Studio</button>
-    <button class="lv-tab" data-tab="tab-vault" role="tab" aria-selected="false">3. AES-256-GCM Zero-Knowledge Vault</button>
-    <button class="lv-tab" data-tab="tab-firewall" role="tab" aria-selected="false">4. Network Exfiltration Audit Log</button>
+  <nav class="lv-tabs" role="tablist" aria-label="LocalVault tools">
+    <button
+      type="button"
+      class="lv-tab active"
+      id="tab-pii-button"
+      data-tab="tab-pii"
+      role="tab"
+      aria-controls="tab-pii"
+      aria-selected="true"
+    >
+      1. PII &amp; Secret Scrubber
+    </button>
+
+    <button
+      type="button"
+      class="lv-tab"
+      id="tab-audio-button"
+      data-tab="tab-audio"
+      role="tab"
+      aria-controls="tab-audio"
+      aria-selected="false"
+    >
+      2. Audio &amp; Note Studio
+    </button>
+
+    <button
+      type="button"
+      class="lv-tab"
+      id="tab-vault-button"
+      data-tab="tab-vault"
+      role="tab"
+      aria-controls="tab-vault"
+      aria-selected="false"
+    >
+      3. Encrypted Vault
+    </button>
+
+    <button
+      type="button"
+      class="lv-tab"
+      id="tab-firewall-button"
+      data-tab="tab-firewall"
+      role="tab"
+      aria-controls="tab-firewall"
+      aria-selected="false"
+    >
+      4. Network Request Monitor
+    </button>
   </nav>
 
   <main class="lv-main">
-    <!-- TAB 1: 4-Layer PII & Secret Scrubber -->
-    <section id="tab-pii" class="lv-panel active">
+
+    <!-- TAB 1: PII AND SECRET SCRUBBER -->
+
+    <section
+      id="tab-pii"
+      class="lv-panel active"
+      role="tabpanel"
+      aria-labelledby="tab-pii-button"
+    >
       <div class="lv-grid-2">
+
         <div class="lv-card">
           <div class="lv-card-header">
-            <h2>Raw Developer Input (.env / Logs / Prompts)</h2>
+            <h2>Raw Developer Input</h2>
+
             <div class="lv-actions">
-              <button id="btn-load-sample" class="btn btn-secondary">Load Leak Sample</button>
-              <button id="btn-scrub" class="btn btn-primary">Scrub 4 Layers</button>
+              <button
+                type="button"
+                id="btn-load-sample"
+                class="btn btn-secondary"
+              >
+                Load Sample
+              </button>
+
+              <button
+                type="button"
+                id="btn-scrub"
+                class="btn btn-primary"
+              >
+                Scrub Sensitive Data
+              </button>
             </div>
           </div>
-          <textarea id="pii-input" class="lv-textarea mono" rows="12" placeholder="Paste .env secrets, SSH keys, Postgres URIs, credit cards, API keys, or production logs here..."></textarea>
+
+          <textarea
+            id="pii-input"
+            class="lv-textarea mono"
+            rows="12"
+            spellcheck="false"
+            autocomplete="off"
+            autocapitalize="off"
+            aria-label="Raw developer input"
+            placeholder="Paste configuration, logs, prompts, credentials or other text for local sensitive-data scanning..."
+          ></textarea>
+
           <div class="lv-inline-controls">
-            <input type="text" id="custom-block-input" class="lv-input mono" placeholder="Add custom blocklist term (e.g. ProjectCodename)" />
-            <button id="btn-add-block" class="btn btn-secondary">Add Term</button>
+            <input
+              type="text"
+              id="custom-block-input"
+              class="lv-input mono"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Custom blocklist term"
+              aria-label="Custom blocklist term"
+            />
+
+            <button
+              type="button"
+              id="btn-add-block"
+              class="btn btn-secondary"
+            >
+              Add Term
+            </button>
           </div>
         </div>
 
         <div class="lv-card">
           <div class="lv-card-header">
-            <h2>Sanitized Output &amp; Fuzzy Re-Hydration</h2>
+            <h2>Sanitized Output</h2>
+
             <div class="lv-actions">
-              <button id="btn-ask-slm" class="btn btn-accent">Run Local WebGPU SLM</button>
-              <button id="btn-abort-slm" class="btn btn-danger" disabled>Abort</button>
-              <button id="btn-rehydrate" class="btn btn-secondary">Fuzzy Re-Hydrate</button>
+              <button
+                type="button"
+                id="btn-ask-slm"
+                class="btn btn-accent"
+              >
+                Run Local Model
+              </button>
+
+              <button
+                type="button"
+                id="btn-abort-slm"
+                class="btn btn-danger"
+                disabled
+              >
+                Abort
+              </button>
+
+              <button
+                type="button"
+                id="btn-rehydrate"
+                class="btn btn-secondary"
+              >
+                Re-hydrate
+              </button>
             </div>
           </div>
-          <textarea id="pii-output" class="lv-textarea mono" rows="12" placeholder="Sanitized text with deterministic placeholders ([OPENAI_KEY_1], [DB_URI_1], etc.) appears here..."></textarea>
-          <div id="pii-stats-bar" class="lv-stats-bar mono">Total Redacted: 0 | Layer 1: 0 | Layer 2 (Entropy/AST): 0 | Layer 3: 0 | Layer 4 (NER): 0</div>
+
+          <textarea
+            id="pii-output"
+            class="lv-textarea mono"
+            rows="12"
+            spellcheck="false"
+            autocomplete="off"
+            aria-label="Sanitized text output"
+            placeholder="Sanitized text and replacement placeholders will appear here..."
+          ></textarea>
+
+          <div
+            id="pii-stats-bar"
+            class="lv-stats-bar mono"
+            role="status"
+            aria-live="polite"
+          >
+            Total Redacted: 0 | Layer 1: 0 | Layer 2: 0 | Layer 3: 0 | Layer 4: 0
+          </div>
+
+          <p class="lv-subtitle">
+            Layer 4 currently uses contextual name-matching heuristics.
+            It is not a full named-entity recognition model.
+          </p>
         </div>
+
       </div>
     </section>
 
-    <!-- TAB 2: Audio & Note Structurer -->
-    <section id="tab-audio" class="lv-panel">
+    <!-- TAB 2: AUDIO AND NOTE STUDIO -->
+
+    <section
+      id="tab-audio"
+      class="lv-panel"
+      role="tabpanel"
+      aria-labelledby="tab-audio-button"
+    >
       <div class="lv-grid-2">
+
         <div class="lv-card">
           <div class="lv-card-header">
-            <h2>16kHz Audio Capture &amp; Whisper WebGPU ASR</h2>
+            <h2>16kHz Audio Utilities &amp; Whisper</h2>
+
             <div class="lv-actions">
-              <button id="btn-synth-wav" class="btn btn-secondary">Synthesize 16kHz Test WAV</button>
-              <button id="btn-transcribe" class="btn btn-primary">Transcribe Local Audio</button>
+              <button
+                type="button"
+                id="btn-synth-wav"
+                class="btn btn-secondary"
+              >
+                Generate Test WAV
+              </button>
+
+              <button
+                type="button"
+                id="btn-transcribe"
+                class="btn btn-primary"
+              >
+                Transcribe Test Audio
+              </button>
             </div>
           </div>
+
+          <p class="lv-subtitle">
+            Generates a synthetic test tone for the audio pipeline.
+            The tone is not recorded speech. Microphone and uploaded-audio
+            recording are not implemented yet.
+          </p>
+
           <div class="lv-audio-controls">
-            <select id="note-mode-select" class="lv-select">
-              <option value="meeting">Mode: Engineering Standup / Meeting</option>
-              <option value="incident">Mode: SRE Incident Post-Mortem (RCA)</option>
-              <option value="lecture">Mode: Technical Lecture Study Guide</option>
-              <option value="executive">Mode: Executive Engineering Brief</option>
+            <select
+              id="note-mode-select"
+              class="lv-select"
+              aria-label="Note structuring mode"
+            >
+              <option value="meeting">
+                Mode: Engineering Meeting
+              </option>
+
+              <option value="incident">
+                Mode: SRE Incident Post-Mortem
+              </option>
+
+              <option value="lecture">
+                Mode: Technical Lecture
+              </option>
+
+              <option value="executive">
+                Mode: Executive Engineering Brief
+              </option>
             </select>
-            <button id="btn-structure-notes" class="btn btn-accent">Structure &amp; Auto-Scrub Notes</button>
+
+            <button
+              type="button"
+              id="btn-structure-notes"
+              class="btn btn-accent"
+            >
+              Structure &amp; Scrub Notes
+            </button>
           </div>
-          <textarea id="transcript-input" class="lv-textarea mono" rows="10" placeholder="Raw transcript or incident log to structure offline..."></textarea>
+
+          <textarea
+            id="transcript-input"
+            class="lv-textarea mono"
+            rows="10"
+            spellcheck="false"
+            aria-label="Transcript or notes input"
+            placeholder="Enter transcript text or engineering notes here..."
+          ></textarea>
         </div>
 
         <div class="lv-card">
           <div class="lv-card-header">
-            <h2>Structured Engineering Markdown Output</h2>
+            <h2>Structured Markdown Output</h2>
           </div>
-          <textarea id="structured-output" class="lv-textarea mono" rows="13" readonly placeholder="Structured Markdown with auto-scrubbed PII placeholders will appear here..."></textarea>
+
+          <textarea
+            id="structured-output"
+            class="lv-textarea mono"
+            rows="13"
+            readonly
+            spellcheck="false"
+            aria-label="Structured Markdown output"
+            placeholder="Structured Markdown will appear here..."
+          ></textarea>
         </div>
+
       </div>
     </section>
 
-    <!-- TAB 3: AES-256-GCM Zero-Knowledge Vault -->
-    <section id="tab-vault" class="lv-panel">
+    <!-- TAB 3: ENCRYPTED VAULT -->
+
+    <section
+      id="tab-vault"
+      class="lv-panel"
+      role="tabpanel"
+      aria-labelledby="tab-vault-button"
+    >
       <div class="lv-grid-2">
+
         <div class="lv-card">
           <div class="lv-card-header">
-            <h2>PBKDF2-SHA256 (100k) + AES-256-GCM Vault</h2>
+            <h2>
+              PBKDF2-SHA256 (310k) + AES-256-GCM Vault
+            </h2>
           </div>
+
+          <p class="lv-subtitle">
+            New vaults use PBKDF2-SHA256 with 310,000 iterations
+            and AES-256-GCM authenticated encryption.
+          </p>
+
           <div class="lv-inline-controls">
-            <input type="password" id="vault-passphrase" class="lv-input mono" placeholder="Enter master passphrase (never leaves browser)..." />
-            <button id="btn-lock-vault" class="btn btn-primary">Encrypt &amp; Lock</button>
-            <button id="btn-unlock-vault" class="btn btn-secondary">Decrypt &amp; Unlock</button>
-            <button id="btn-export-vault" class="btn btn-accent">Export .lvvault</button>
+            <input
+              type="password"
+              id="vault-passphrase"
+              class="lv-input mono"
+              autocomplete="new-password"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="Enter master passphrase..."
+              aria-label="Vault master passphrase"
+            />
+
+            <button
+              type="button"
+              id="btn-lock-vault"
+              class="btn btn-primary"
+            >
+              Encrypt &amp; Lock
+            </button>
+
+            <button
+              type="button"
+              id="btn-unlock-vault"
+              class="btn btn-secondary"
+            >
+              Decrypt &amp; Unlock
+            </button>
+
+            <button
+              type="button"
+              id="btn-export-vault"
+              class="btn btn-accent"
+            >
+              Export .lvvault
+            </button>
           </div>
-          <textarea id="vault-ciphertext" class="lv-textarea mono" rows="11" placeholder="Encrypted .lvvault JSON envelope (salt, 12-byte IV, PBKDF2 iterations, AES-GCM ciphertext)..."></textarea>
+
+          <textarea
+            id="vault-ciphertext"
+            class="lv-textarea mono"
+            rows="11"
+            spellcheck="false"
+            autocomplete="off"
+            aria-label="Encrypted vault data"
+            placeholder="Encrypted .lvvault JSON envelope appears here. You can also paste an existing envelope..."
+          ></textarea>
         </div>
 
         <div class="lv-card">
           <div class="lv-card-header">
-            <h2>Decrypted Placeholder Map Inspection</h2>
+            <h2>Decrypted Placeholder Map</h2>
           </div>
-          <textarea id="vault-plaintext" class="lv-textarea mono" rows="13" readonly placeholder="Unlocked secret map appears here after AES-256-GCM authentication succeeds..."></textarea>
+
+          <textarea
+            id="vault-plaintext"
+            class="lv-textarea mono"
+            rows="13"
+            readonly
+            spellcheck="false"
+            aria-label="Decrypted vault contents"
+            placeholder="Decrypted data appears here after successful authentication..."
+          ></textarea>
         </div>
+
       </div>
     </section>
 
-    <!-- TAB 4: Network Exfiltration Firewall -->
-    <section id="tab-firewall" class="lv-panel">
+    <!-- TAB 4: NETWORK REQUEST MONITOR -->
+
+    <section
+      id="tab-firewall"
+      class="lv-panel"
+      role="tabpanel"
+      aria-labelledby="tab-firewall-button"
+    >
       <div class="lv-card">
         <div class="lv-card-header">
-          <h2>Client-Side Network Exfiltration Monitor (fetch / XHR / sendBeacon)</h2>
+          <h2>Browser Request Monitoring</h2>
+
           <div class="lv-actions">
-            <button id="btn-test-exfil" class="btn btn-danger">Simulate POST Exfiltration Attack</button>
+            <button
+              type="button"
+              id="btn-test-exfil"
+              class="btn btn-danger"
+            >
+              Simulate Blocked POST
+            </button>
           </div>
         </div>
-        <div id="firewall-stats" class="lv-stats-bar mono">Intercepted Requests: 0 | Allowed Read-Only: 0 | Blocked Exfiltration Attempts: 0</div>
-        <div id="firewall-log" class="lv-audit-log mono"></div>
+
+        <p class="lv-subtitle">
+          Monitors supported page-level fetch, XMLHttpRequest and
+          sendBeacon calls. The worker has a separate fetch guard.
+          This is not a complete browser or operating-system firewall.
+        </p>
+
+        <div
+          id="firewall-stats"
+          class="lv-stats-bar mono"
+          role="status"
+          aria-live="polite"
+        >
+          Recorded Events: 0 | Allowed Read-Only: 0 | Blocked Events: 0
+        </div>
+
+        <div
+          id="firewall-log"
+          class="lv-audit-log mono"
+          role="log"
+          aria-live="polite"
+          aria-label="Network request audit log"
+        ></div>
       </div>
     </section>
+
   </main>
 
   <script type="module" src="./src/main.js"></script>
