@@ -1,23 +1,24 @@
 
 /**
- * LocalVault AI — Network Request Guard
+ * LocalVault AI — Network Request Firewall
  *
- * Controls requests made through:
+ * Intercepts:
  * - fetch()
  * - XMLHttpRequest
  * - navigator.sendBeacon()
  *
- * Policy:
- * - Only GET and HEAD requests are permitted.
- * - Requests with bodies are blocked.
- * - Same-origin requests are permitted outside strict lockdown.
- * - External requests require HTTPS and an approved exact hostname.
- * - Strict lockdown permits only same-origin and local generated resources.
+ * Security policy:
+ * - Allows GET and HEAD only.
+ * - Blocks requests carrying payloads.
+ * - Allows same-origin application resources.
+ * - Allows HTTPS requests to explicitly approved hosts.
+ * - Blocks unapproved external hosts and suspicious URLs.
+ * - Strict Air-Gap mode blocks all external requests.
  *
  * IMPORTANT:
- * This is a client-side request guard, not a complete operating-system
- * firewall. It does not automatically intercept requests made by workers,
- * service workers, WebSockets, WebRTC, or browser-managed connections.
+ * This is a client-side request guard, NOT a complete network firewall.
+ * It does not automatically intercept requests from Web Workers,
+ * Service Workers, WebSockets, WebRTC or browser-managed connections.
  */
 
 const ALLOWED_MODEL_HOSTS = Object.freeze([
@@ -49,12 +50,13 @@ function sanitizeUrlForLog(rawUrl, baseUrl) {
   try {
     const parsed = new URL(source, baseUrl);
 
-    // Do not expose URL-embedded credentials in the audit log.
+    // Never expose URL-embedded credentials in logs.
     if (parsed.username || parsed.password) {
       parsed.username = '[REDACTED]';
       parsed.password = '[REDACTED]';
     }
 
+    // Remove sensitive query parameter values.
     for (const key of [...parsed.searchParams.keys()]) {
       if (SENSITIVE_QUERY_KEYS.test(key)) {
         parsed.searchParams.set(key, '[REDACTED]');
@@ -128,7 +130,7 @@ export class NetworkFirewall {
       try {
         listener(event);
       } catch {
-        // An audit listener must never interrupt request handling.
+        // Audit listener errors must not affect request handling.
       }
     }
 
@@ -150,6 +152,14 @@ export class NetworkFirewall {
     });
   }
 
+  /**
+   * Evaluate a request against the current firewall policy.
+   *
+   * @param {string} url
+   * @param {string} [method='GET']
+   * @param {any} [body=null]
+   * @returns {{allowed:boolean,action:string,reason:string,method:string,url:string}}
+   */
   inspectRequest(url, method = 'GET', body = null) {
     const normalizedMethod = normalizeMethod(method);
     const rawUrl = String(url || '');
@@ -169,7 +179,7 @@ export class NetworkFirewall {
       return decision;
     };
 
-    // Never permit methods that can submit or mutate remote data.
+    // 1. Permit only read-only HTTP methods.
     if (!ALLOWED_METHODS.has(normalizedMethod)) {
       return decide(
         false,
@@ -178,7 +188,7 @@ export class NetworkFirewall {
       );
     }
 
-    // Reject any supplied body, including empty strings and non-string bodies.
+    // 2. Block any request with a supplied body.
     if (body !== null && body !== undefined) {
       return decide(
         false,
@@ -187,6 +197,7 @@ export class NetworkFirewall {
       );
     }
 
+    // 3. Parse and normalize the destination.
     let parsedUrl;
 
     try {
@@ -199,7 +210,7 @@ export class NetworkFirewall {
       );
     }
 
-    // Do not permit URLs that embed username/password credentials.
+    // 4. Never accept embedded URL credentials.
     if (parsedUrl.username || parsedUrl.password) {
       return decide(
         false,
@@ -208,16 +219,17 @@ export class NetworkFirewall {
       );
     }
 
-    // Local generated resources do not contact an external host.
+    // 5. Permit local generated resources.
     if (LOCAL_PROTOCOLS.has(parsedUrl.protocol)) {
-      if (this.airGapLockdown && parsedUrl.protocol === 'blob:') {
-        if (parsedUrl.origin !== this.getOrigin()) {
-          return decide(
-            false,
-            'BLOCKED_AIRGAP',
-            'Blob URL does not belong to this application origin.'
-          );
-        }
+      if (
+        parsedUrl.protocol === 'blob:' &&
+        parsedUrl.origin !== this.getOrigin()
+      ) {
+        return decide(
+          false,
+          'BLOCKED_CROSS_ORIGIN_BLOB',
+          'Blob URL does not belong to this application origin.'
+        );
       }
 
       return decide(
@@ -227,18 +239,7 @@ export class NetworkFirewall {
       );
     }
 
-    if (
-      parsedUrl.protocol !== 'https:' &&
-      parsedUrl.origin !== this.getOrigin()
-    ) {
-      return decide(
-        false,
-        'BLOCKED_PROTOCOL',
-        'External requests must use HTTPS.'
-      );
-    }
-
-    // The application must be able to load its own local assets.
+    // 6. Permit the application to load its own resources.
     if (parsedUrl.origin === this.getOrigin()) {
       return decide(
         true,
@@ -247,15 +248,25 @@ export class NetworkFirewall {
       );
     }
 
+    // 7. Strict lockdown blocks all external traffic.
     if (this.airGapLockdown) {
       return decide(
         false,
         'BLOCKED_AIRGAP',
-        'External traffic is disabled by strict lockdown.'
+        'External traffic is disabled by Strict Air-Gap Lockdown.'
       );
     }
 
-    // External hostnames are matched exactly; suffix lookalikes are rejected.
+    // 8. External requests must use HTTPS.
+    if (parsedUrl.protocol !== 'https:') {
+      return decide(
+        false,
+        'BLOCKED_PROTOCOL',
+        'External requests must use HTTPS.'
+      );
+    }
+
+    // 9. Exact hostname allowlist. Similar-looking domains are rejected.
     const hostname = parsedUrl.hostname.toLowerCase();
 
     if (!ALLOWED_MODEL_HOSTS.includes(hostname)) {
@@ -266,7 +277,7 @@ export class NetworkFirewall {
       );
     }
 
-    // Non-standard external ports are not accepted.
+    // 10. Only standard HTTPS port is accepted.
     if (parsedUrl.port && parsedUrl.port !== '443') {
       return decide(
         false,
@@ -282,12 +293,17 @@ export class NetworkFirewall {
     );
   }
 
+  /**
+   * Install fetch, XMLHttpRequest and sendBeacon interceptors.
+   */
   install(targetGlobal = globalThis) {
     if (this.installed || !targetGlobal) {
       return this;
     }
 
     this.targetGlobal = targetGlobal;
+
+    const firewall = this;
 
     // ----------------------------------------------------------
     // fetch()
@@ -299,7 +315,10 @@ export class NetworkFirewall {
       this.originalFetch = originalFetch;
 
       try {
-        targetGlobal.fetch = async function interceptedFetch(input, init = {}) {
+        targetGlobal.fetch = async function interceptedFetch(
+          input,
+          init = {}
+        ) {
           const options = init || {};
 
           const requestUrl =
@@ -321,7 +340,7 @@ export class NetworkFirewall {
                 ? input.body ?? null
                 : null;
 
-          const verdict = thisFirewall.inspectRequest(
+          const verdict = firewall.inspectRequest(
             requestUrl,
             requestMethod,
             requestBody
@@ -333,8 +352,12 @@ export class NetworkFirewall {
             );
           }
 
-          return originalFetch.call(targetGlobal, input, init);
-        }.bind({ get thisFirewall() { return firewallReference; } });
+          return originalFetch.call(
+            targetGlobal,
+            input,
+            init
+          );
+        };
       } catch (error) {
         this.installErrors.push(
           `fetch interceptor: ${error?.message || String(error)}`
@@ -352,10 +375,12 @@ export class NetworkFirewall {
       this.originalXhrOpen = prototype.open;
       this.originalXhrSend = prototype.send;
 
-      const firewall = this;
-
       try {
-        prototype.open = function interceptedOpen(method, url, ...rest) {
+        prototype.open = function interceptedOpen(
+          method,
+          url,
+          ...rest
+        ) {
           xhrMetadata.set(this, {
             method: normalizeMethod(method),
             url: String(url || '')
@@ -387,7 +412,10 @@ export class NetworkFirewall {
             );
           }
 
-          return firewall.originalXhrSend.call(this, body);
+          return firewall.originalXhrSend.call(
+            this,
+            body
+          );
         };
       } catch (error) {
         this.installErrors.push(
@@ -405,21 +433,22 @@ export class NetworkFirewall {
       typeof targetGlobal.navigator.sendBeacon === 'function'
     ) {
       const navigatorObject = targetGlobal.navigator;
-      const originalSendBeacon = navigatorObject.sendBeacon;
 
-      this.originalSendBeacon = originalSendBeacon;
-
-      const firewall = this;
+      this.originalSendBeacon =
+        navigatorObject.sendBeacon;
 
       try {
-        navigatorObject.sendBeacon = function interceptedBeacon(url, data) {
+        navigatorObject.sendBeacon = function interceptedBeacon(
+          url,
+          data
+        ) {
           firewall.inspectRequest(
             url,
             'POST',
             data === undefined ? 'beacon' : data
           );
 
-          // sendBeacon reports failure without sending the payload.
+          // Do not send the payload.
           return false;
         };
       } catch (error) {
@@ -431,25 +460,23 @@ export class NetworkFirewall {
 
     this.installed = true;
 
-    if (this.installErrors.length > 0) {
-      this.recordEvent({
-        method: 'SYSTEM',
-        url: 'localvault://firewall-install',
-        action: 'PARTIAL_INSTALL',
-        reason: this.installErrors.join('; ')
-      });
-    } else {
-      this.recordEvent({
-        method: 'SYSTEM',
-        url: 'localvault://firewall-install',
-        action: 'INSTALLED',
-        reason: 'Available request interceptors installed.'
-      });
-    }
+    this.recordEvent({
+      method: 'SYSTEM',
+      url: 'localvault://firewall-install',
+      action: this.installErrors.length
+        ? 'PARTIAL_INSTALL'
+        : 'INSTALLED',
+      reason: this.installErrors.length
+        ? this.installErrors.join('; ')
+        : 'Available request interceptors installed.'
+    });
 
     return this;
   }
 
+  /**
+   * Restore the original browser methods.
+   */
   uninstall(targetGlobal = this.targetGlobal || globalThis) {
     if (!this.installed || !targetGlobal) {
       return;
@@ -486,6 +513,9 @@ export class NetworkFirewall {
     this.targetGlobal = null;
   }
 
+  /**
+   * Return a summary of recorded firewall events.
+   */
   getStats() {
     let allowed = 0;
     let blocked = 0;
@@ -509,6 +539,3 @@ export class NetworkFirewall {
     };
   }
 }
-
-// A private reference used by the fetch interceptor.
-const firewallReference = null;
