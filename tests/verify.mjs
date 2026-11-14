@@ -182,7 +182,7 @@ await runTest('6. Zero-Knowledge AES-256-GCM + PBKDF2-SHA256 (310k Iterations) C
   assert.equal(envelope.magic, 'LVVAULT_V2');
   assert.equal(envelope.kdf, 'PBKDF2-SHA256');
   assert.equal(envelope.cipher, 'AES-256-GCM');
-  assert.equal(envelope.iterations, 350000);
+  assert.equal(envelope.iterations, 310000);
 
   const decrypted = await vault.unlock(envelope, 'CorrectHorseBatteryStaple!99');
   assert.deepEqual(decrypted, secretData);
