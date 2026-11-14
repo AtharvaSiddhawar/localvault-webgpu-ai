@@ -1,7 +1,8 @@
+
 {
   "name": "localvault-webgpu-ai",
   "version": "2.0.0",
-  "description": "LocalVault AI v2.0 — 100% browser and terminal-based AI developer utility suite powered by WebGPU and Transformers.js v3.",
+  "description": "A local-first browser and terminal developer toolkit for PII scrubbing, encrypted vault storage, request monitoring, audio utilities and local AI inference.",
   "type": "module",
   "private": false,
   "bin": {
@@ -20,7 +21,6 @@
     "privacy",
     "pii-scrubber",
     "aes-256-gcm",
-    "zero-cloud",
     "local-ai",
     "whisper",
     "smollm2"
