@@ -1,51 +1,252 @@
-# LocalVault AI v2.0 (Zero-Cloud Client-Side AI Developer Suite)
 
-100% browser and terminal-based AI developer utility suite powered by **WebGPU** and **Transformers.js v3** (`@huggingface/transformers ^3.3.3`). Requires **zero API keys**, incurs **zero cloud token costs**, and operates with **zero data exfiltration**.
+# LocalVault AI v2.0
+
+**A local-first developer toolkit for browser-based privacy utilities and local AI inference.**
+
+LocalVault combines sensitive-data detection, encrypted vault storage, browser request monitoring, audio utilities, transcript structuring and a dedicated local inference worker.
+
+It does not require an application API key or a hosted inference API. However, model and library files may need to be downloaded from approved external hosts the first time they are used.
 
 ---
 
-## 1. Architecture & 16-File Repository Structure
+## Features
+
+### 1. PII and secret scrubbing
+
+The PII engine includes:
+
+- Structural pattern detection for common credentials and identifiers.
+- Shannon entropy scanning for possible high-entropy secrets.
+- Luhn check-digit validation.
+- Custom user-defined blocklist terms.
+- A developer loopback allowlist.
+- Context-based person-name detection.
+- Placeholder replacement and rehydration.
+
+Detection is heuristic. It cannot guarantee that every sensitive value will be found.
+
+The contextual person-name feature is a rule-based heuristic, not a complete named-entity recognition model.
+
+### 2. Encrypted vault
+
+The vault uses the browser's Web Crypto API:
+
+| Component | Configuration |
+|---|---|
+| Encryption | AES-256-GCM |
+| Key derivation | PBKDF2-SHA256 |
+| New vault iterations | 310,000 |
+| Salt | 16 bytes |
+| Initialization vector | 12 bytes |
+| Authentication tag | 128 bits |
+
+New vaults require a passphrase of at least 12 characters.
+
+The application does not supply a default passphrase. Keep your passphrase and exported vault file safe; losing the passphrase can make encrypted data unrecoverable.
+
+This implementation has not undergone an independent cryptographic security audit.
+
+### 3. Network request monitoring
+
+The page-level request guard monitors supported:
+
+- `fetch()`
+- `XMLHttpRequest`
+- `navigator.sendBeacon()`
+
+It allows same-origin resources and approved HTTPS model/library hosts, while blocking unsupported methods and payload-bearing requests.
+
+The inference worker also has its own `fetch()` request guard.
+
+**Important limitations:** These controls are not a complete browser or operating-system firewall. They do not cover every browser-managed connection, module import, redirect, WebSocket, WebRTC or other networking mechanism. The page's lockdown switch does not guarantee that all worker or browser network activity is disabled.
+
+### 4. Audio utilities
+
+The audio module provides:
+
+- Synthetic test-tone generation.
+- Mono 16-bit PCM WAV encoding.
+- Browser WAV Blob export.
+- Audio resampling to 16kHz mono.
+
+The current UI uses synthetic test audio. Microphone recording and uploaded-audio capture are not implemented.
+
+### 5. Note structuring
+
+The deterministic note structurer supports four formats:
+
+- `meeting`
+- `lecture`
+- `incident`
+- `executive`
+
+It classifies available sentences using keyword rules and can scrub sensitive data before formatting.
+
+It is not an AI-powered summarizer. It does not independently verify facts or create missing meeting details.
+
+### 6. Local model inference
+
+The dedicated worker supports:
+
+- `HuggingFaceTB/SmolLM2-135M-Instruct`
+- `Qwen/Qwen2.5-0.5B-Instruct`
+- `onnx-community/whisper-tiny.en`
+
+WebGPU is selected when an adapter is available; otherwise, the worker attempts a WASM fallback.
+
+Model availability and performance depend on browser support, device hardware, memory and model compatibility.
+
+---
+
+## Technology stack
+
+| Technology | Purpose |
+|---|---|
+| HTML, CSS, JavaScript | Browser interface |
+| Vite | Development and production build |
+| Web Crypto API | Vault encryption |
+| WebGPU | Hardware-accelerated inference where supported |
+| Transformers.js v3 | Browser model pipelines |
+| Web Workers | Separate inference execution |
+| Node.js | CLI and regression tests |
+| GitHub Actions | Build, test and deployment |
+
+---
+
+## Repository structure
 
 | File | Responsibility |
-| :--- | :--- |
-| `package.json` | Node.js manifest with `@huggingface/transformers` (`^3.3.3`), Vite bundler, `localvault` CLI bin script, and regression test runner. |
-| `vite.config.js` | Vite ESNext bundler configuration with Cross-Origin Isolation headers (`COOP: same-origin`, `COEP: credentialless`) and ES module Web Worker output. |
-| `public/coi-serviceworker.js` | Cross-Origin Isolation Service Worker injecting COOP/COEP headers on static hosts (GitHub Pages) so `SharedArrayBuffer` and multi-threaded WebGPU/WASM run at full speed. |
-| `index.html` | Responsive dark-mode single-page application UI with `importmap` pointing to jsDelivr for `@huggingface/transformers`. |
-| `src/styles.css` | Developer dark-mode stylesheet using `Inter` & `JetBrains Mono`, CSS custom variables, and responsive grid layout. |
-| `src/main.js` | UI controller binding the 4-layer PII scrubber, AES-256-GCM vault, network firewall audit log, audio studio, and WebGPU worker bridge. |
-| `src/worker.js` | Dedicated Web Worker handling asynchronous WebGPU/WASM inference (Whisper ASR + SmolLM2/Qwen2.5 SLMs) with `InterruptableStoppingCriteria`. |
-| `src/pii-engine.js` | 4-Layer Hybrid PII & Secret Firewall + Shannon entropy scanner + Luhn validator + `rehydrateText()` fuzzy placeholder restoration. |
-| `src/crypto-vault.js` | Zero-Knowledge Cryptographic Vault using native Web Crypto API (`PBKDF2-SHA256` with 100,000 iterations + `AES-256-GCM`) to lock/unlock and export `.lvvault` files. |
-| `src/network-firewall.js` | Client-side network exfiltration monitor intercepting `fetch`, `XMLHttpRequest`, and `navigator.sendBeacon`, blocking `POST`/`PUT` payload exfiltration, and enforcing Strict Air-Gap Lockdown. |
-| `src/note-structurer.js` | Offline audio transcript structurer supporting 4 engineering modes (`meeting`, `lecture`, `incident`, `executive`) with auto-PII scrubbing. |
-| `src/audio-utils.js` | 16kHz mono resampler (`OfflineAudioContext`), pure-JS 16kHz WAV synthesizer for mic-free testing, and RIFF/WAVE Blob exporter. |
-| `bin/localvault-cli.mjs` | Node.js CLI executable for running the 4-layer PII scrubber and note structurer in terminals or CI/CD pipelines. |
-| `tests/verify.mjs` | Zero-dependency Node.js regression test suite verifying all 16 files, Luhn check digits, Shannon entropy, 4-layer scrubbing, fuzzy re-hydration, AES-256-GCM, WAV synthesis, and note structuring. |
-| `README.md` | Full technical documentation and architecture overview. |
-| `.github/workflows/deploy.yml` | GitHub Actions CI/CD workflow running `npm test` and deploying the Vite production bundle to GitHub Pages on Node.js 24 native actions. |
+|---|---|
+| `package.json` | Dependencies and scripts |
+| `vite.config.js` | Vite configuration |
+| `public/coi-serviceworker.js` | Cross-origin isolation helper |
+| `index.html` | Application interface |
+| `src/styles.css` | Responsive interface styling |
+| `src/main.js` | Browser UI controller |
+| `src/worker.js` | Local model inference |
+| `src/pii-engine.js` | PII and secret detection |
+| `src/crypto-vault.js` | Encrypted vault |
+| `src/network-firewall.js` | Page-level request guard |
+| `src/note-structurer.js` | Deterministic Markdown structuring |
+| `src/audio-utils.js` | WAV and resampling utilities |
+| `bin/localvault-cli.mjs` | Node.js command-line interface |
+| `tests/verify.mjs` | Regression tests |
+| `README.md` | Project documentation |
+| `.github/workflows/deploy.yml` | Automated verification and deployment |
 
 ---
 
-## 2. Quick Start (Local & CLI)
+## Quick start
+
+### Requirements
+
+- Node.js 18 or later.
+- npm.
+- A modern browser.
+- A compatible GPU and browser for WebGPU acceleration; WASM is the fallback.
+
+### Install dependencies
 
 ```bash
-# Install dependencies
 npm install
+```
 
-# Run the zero-dependency regression test suite
+### Run regression tests
+
+```bash
 npm test
+```
 
-# Run the terminal CLI scrubber on a file or string
-npm run cli -- scrub .env
+### Start the development server
 
-# Structure an incident post-mortem from terminal
-npm run cli -- structure "Database outage on 198.51.100.12 fixed by rotating API_KEY=sk-proj-1234567890abcdefghijklmnop" --mode=incident
-
-# Launch local development server with COOP/COEP headers
+```bash
 npm run dev
+```
 
-# Build static production bundle for GitHub Pages
+### Build the production application
+
+```bash
 npm run build
 ```
 
+### Preview the production build
+
+```bash
+npm run preview
+```
+
+---
+
+## CLI usage
+
+### Scrub a file
+
+```bash
+npm run cli -- scrub .env
+```
+
+### Scrub literal text
+
+```bash
+npm run cli -- scrub "Email alice@example.com"
+```
+
+### Structure an incident report
+
+```bash
+npm run cli -- structure notes.txt --mode=incident
+```
+
+### Calculate Shannon entropy
+
+```bash
+npm run cli -- entropy "example-token-123"
+```
+
+### Display help
+
+```bash
+npm run cli -- --help
+```
+
+---
+
+## GitHub Pages deployment
+
+The GitHub Actions workflow:
+
+1. Checks out the repository.
+2. Installs dependencies.
+3. Runs the regression suite.
+4. Builds the Vite production application.
+5. Verifies the build output.
+6. Uploads the Pages artifact.
+7. Deploys to GitHub Pages.
+
+The deployed application is available at:
+
+https://atharvasiddhawar.github.io/localvault-webgpu-ai/
+
+The first model use may require an internet connection to retrieve model and library files.
+
+---
+
+## Privacy and security notes
+
+LocalVault is designed to process application text and run supported inference in the browser or locally through Node.js.
+
+That does not mean that all network activity is disabled or that every sensitive value is guaranteed to be detected.
+
+Before using the application with real sensitive data:
+
+- Review the sanitized output.
+- Never treat heuristic detection as a substitute for careful review.
+- Protect exported vault files and passphrases.
+- Understand that browser extensions, compromised devices and other software are outside this application's security boundary.
+- Do not use the request monitor as the only control for preventing data disclosure.
+
+---
+
+## License
+
+MIT
