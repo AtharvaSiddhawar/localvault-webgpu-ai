@@ -1,3 +1,4 @@
+
 :root {
   --bg-primary: #0b0f17;
   --bg-secondary: #111827;
@@ -9,8 +10,8 @@
   --accent-emerald: #10b981;
   --accent-amber: #f59e0b;
   --accent-danger: #ef4444;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 * {
@@ -19,12 +20,37 @@
   padding: 0;
 }
 
+html {
+  min-width: 320px;
+  background: var(--bg-primary);
+  color-scheme: dark;
+}
+
 body {
-  background-color: var(--bg-primary);
+  min-height: 100vh;
+  background: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  line-height: 1.5;
-  min-height: 100vh;
+  line-height: 1.55;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 3px;
 }
 
 .mono {
@@ -46,19 +72,21 @@ body {
   display: flex;
   align-items: center;
   gap: 0.875rem;
+  min-width: 0;
 }
 
 .lv-logo-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   width: 2.5rem;
   height: 2.5rem;
   border-radius: 0.5rem;
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-emerald));
+  color: #fff;
   font-family: var(--font-mono);
   font-weight: 700;
-  color: #fff;
 }
 
 .lv-brand h1 {
@@ -67,17 +95,20 @@ body {
 }
 
 .lv-version {
-  font-size: 0.75rem;
+  display: inline-block;
   padding: 0.15rem 0.45rem;
   border-radius: 0.25rem;
   background: rgba(59, 130, 246, 0.2);
   color: #93c5fd;
   font-family: var(--font-mono);
+  font-size: 0.75rem;
+  vertical-align: middle;
 }
 
 .lv-subtitle {
-  font-size: 0.8rem;
   color: var(--text-secondary);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
 }
 
 .lv-status-bar {
@@ -88,12 +119,19 @@ body {
 }
 
 .status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.8rem;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-card);
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  padding: 0.25rem 0.65rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-card);
+}
+
+.status-checking {
+  color: var(--text-secondary);
 }
 
 .status-ok {
@@ -110,14 +148,18 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  font-size: 0.8rem;
-  font-weight: 600;
   padding: 0.3rem 0.75rem;
+  border: 1px solid rgba(239, 68, 68, 0.35);
   border-radius: 0.375rem;
   background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.35);
   color: #fca5a5;
   cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.airgap-switch input {
+  accent-color: var(--accent-danger);
 }
 
 .lv-tabs {
@@ -130,30 +172,38 @@ body {
 }
 
 .lv-tab {
+  padding: 0.55rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
   background: transparent;
   color: var(--text-secondary);
-  border: 1px solid transparent;
-  padding: 0.5rem 0.9rem;
-  border-radius: 0.375rem;
+  cursor: pointer;
   font-size: 0.85rem;
   font-weight: 600;
-  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.lv-tab:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
 }
 
 .lv-tab.active {
+  border-color: var(--accent-primary);
   background: var(--bg-card);
   color: var(--text-primary);
-  border-color: var(--accent-primary);
 }
 
 .lv-main {
-  padding: 1.5rem;
+  width: 100%;
   max-width: 1440px;
   margin: 0 auto;
+  padding: 1.5rem;
 }
 
 .lv-panel {
   display: none;
+  min-width: 0;
 }
 
 .lv-panel.active {
@@ -162,31 +212,35 @@ body {
 
 .lv-grid-2 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
   gap: 1.25rem;
 }
 
 .lv-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 0.625rem;
-  padding: 1.15rem;
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 0.85rem;
+  padding: 1.15rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.625rem;
+  background: var(--bg-card);
 }
 
 .lv-card-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.65rem;
 }
 
 .lv-card-header h2 {
+  min-width: 0;
   font-size: 0.95rem;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .lv-actions,
@@ -194,35 +248,69 @@ body {
 .lv-audio-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
   align-items: center;
+  gap: 0.5rem;
 }
 
 .lv-textarea,
 .lv-input,
 .lv-select {
   width: 100%;
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  min-width: 0;
+  padding: 0.7rem 0.75rem;
   border: 1px solid var(--border-subtle);
   border-radius: 0.375rem;
-  padding: 0.65rem 0.75rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-size: 0.82rem;
+}
+
+.lv-textarea {
+  display: block;
+  min-height: 7rem;
+  resize: vertical;
+  line-height: 1.6;
+  tab-size: 2;
+  overflow-wrap: anywhere;
+}
+
+.lv-textarea::placeholder,
+.lv-input::placeholder {
+  color: #778398;
+  opacity: 1;
+}
+
+.lv-textarea:read-only {
+  background: #0d1420;
+  color: #cbd5e1;
 }
 
 .lv-input,
 .lv-select {
-  width: auto;
-  flex: 1;
+  flex: 1 1 12rem;
+}
+
+.lv-select {
+  cursor: pointer;
 }
 
 .btn {
+  min-height: 2.25rem;
   padding: 0.45rem 0.85rem;
-  border-radius: 0.375rem;
   border: 1px solid transparent;
+  border-radius: 0.375rem;
+  cursor: pointer;
   font-size: 0.8rem;
   font-weight: 600;
-  cursor: pointer;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -236,9 +324,9 @@ body {
 }
 
 .btn-secondary {
+  border-color: var(--border-subtle);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  border-color: var(--border-subtle);
 }
 
 .btn-accent {
@@ -252,29 +340,116 @@ body {
 }
 
 .lv-stats-bar {
-  font-size: 0.78rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border-subtle);
   border-radius: 0.375rem;
   background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
   color: #93c5fd;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
 }
 
 .lv-audit-log {
+  display: flex;
   max-height: 360px;
-  overflow-y: auto;
-  background: var(--bg-primary);
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow: auto;
+  padding: 0.75rem;
   border: 1px solid var(--border-subtle);
   border-radius: 0.375rem;
-  padding: 0.75rem;
-  font-size: 0.78rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  background: var(--bg-primary);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
 }
 
-@media (max-width: 768px) {
+.lv-audit-log > div {
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  line-height: 1.6;
+}
+
+.lv-audit-log > div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.lv-audit-log strong {
+  color: #93c5fd;
+}
+
+@media (max-width: 960px) {
   .lv-grid-2 {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lv-header {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 600px) {
+  .lv-header {
+    padding: 1rem;
+  }
+
+  .lv-status-bar {
+    width: 100%;
+  }
+
+  .lv-tabs {
+    gap: 0.4rem;
+    padding: 0.65rem 1rem;
+  }
+
+  .lv-tab {
+    flex: 1 1 100%;
+    text-align: left;
+  }
+
+  .lv-main {
+    padding: 1rem;
+  }
+
+  .lv-card {
+    padding: 0.9rem;
+  }
+
+  .lv-card-header {
+    align-items: stretch;
+  }
+
+  .lv-actions {
+    width: 100%;
+  }
+
+  .lv-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .lv-inline-controls,
+  .lv-audio-controls {
+    align-items: stretch;
+  }
+
+  .lv-inline-controls .btn,
+  .lv-audio-controls .btn {
+    flex: 1 1 100%;
+  }
+
+  .lv-input,
+  .lv-select {
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
