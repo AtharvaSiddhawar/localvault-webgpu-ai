@@ -1,8 +1,10 @@
+
+name: Verify and Deploy LocalVault AI
+
 on:
   push:
     branches:
-      - mainname: Verify & Deploy LocalVault AI v2.0 to GitHub Pages
-
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,53 +13,50 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: true
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   verify-and-build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Setup Node.js 24 LTS
+      - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '24'
+          node-version: 24
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Run 16-file regression verification suite
+      - name: Run regression tests
         run: npm test
 
-      - name: Build production WebGPU bundle with Vite
+      - name: Build production application
         run: npm run build
 
-      - name: Copy COI Service Worker to dist root
-        run: |
-          if [ -f public/coi-serviceworker.js ] && [ ! -f dist/coi-serviceworker.js ]; then
-            cp public/coi-serviceworker.js dist/coi-serviceworker.js
-          fi
+      - name: Verify build output
+        run: test -f dist/index.html
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload GitHub Pages artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: ./dist
+          path: dist
 
   deploy:
     needs: verify-and-build
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
