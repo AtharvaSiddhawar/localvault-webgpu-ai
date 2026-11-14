@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LocalVault AI v2.0 — Zero-Cloud WebGPU Developer Security &amp; Audio Suite</title>
+  <meta name="description" content="100% Client-Side WebGPU AI Suite: 4-Layer PII &amp; High-Entropy Secret Firewall, AES-256-GCM Encrypted Vault, Runtime Air-Gap Network Lockdown, and Offline Whisper Audio Note Structurer." />
+  <script src="./coi-serviceworker.js"></script>
+  <link rel="stylesheet" href="./src/styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="top-header">
+      <div class="brand-group">
+        <div class="brand-logo">LV2</div>
+        <div class="brand-title">
+          <h1>
+            LocalVault AI v2.0
+            <span class="badge">WebGPU + AES-256-GCM + Shannon Entropy</span>
+          </h1>
+          <p class="brand-subtitle">
+            Runs 100% in your browser &bull; Zero API keys &bull; Verifiable Runtime Air-Gap Firewall
+          </p>
+        </div>
+      </div>
+
+      <div class="status-pills">
+        <div class="pill" title="Hardware Compute Backend">
+          <span id="gpu-status-dot" class="dot dot-cyan"></span>
+          <span id="gpu-status-text">Probing WebGPU...</span>
+        </div>
+        <div class="pill" title="Cross-Origin Isolation (SharedArrayBuffer)">
+          <span class="dot dot-emerald"></span>
+          <span id="coi-status-text">COOP/COEP: Checking...</span>
+        </div>
+        <div id="btn-airgap-toggle" class="pill pill-airgap" title="Click to toggle Strict Runtime Air-Gap Lockdown">
+          <span class="dot dot-emerald"></span>
+          <span id="airgap-status-text">Air-Gap: Unlocked (Click to Lock)</span>
+        </div>
+        <div class="pill">
+          <span id="llm-speed-badge" class="mono-token">0.0 tok/s</span>
+        </div>
+        <div class="pill">
+          <span id="engine-status-text">Engine Idle &amp; Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <div id="model-progress-banner" class="progress-banner hidden">
+      <div class="progress-header">
+        <span id="progress-file-label">Caching quantized ONNX shard in browser storage...</span>
+        <span id="progress-pct-label">0%</span>
+      </div>
+      <div class="progress-track">
+        <div id="progress-bar-fill" class="progress-fill"></div>
+      </div>
+    </div>
+
+    <nav class="nav-tabs" aria-label="Developer Workspaces">
+      <button class="tab-btn active" data-tab="tab-pii-scrubber">
+        1. 4-Layer PII &amp; High-Entropy Secret Firewall
+      </button>
+      <button class="tab-btn" data-tab="tab-audio-studio">
+        2. Offline Whisper Audio Studio &amp; Auto-Scrubbed Notes
+      </button>
+      <button class="tab-btn" data-tab="tab-security-hardware">
+        3. Runtime Network Firewall Audit &amp; WebGPU Telemetry
+      </button>
+    </nav>
+
+    <section id="tab-pii-scrubber" class="tab-panel active">
+      <div class="card" style="margin-bottom: 1.15rem;">
+        <div class="card-header">
+          <div class="card-title">
+            <span>4-Layer Detection Matrix (Structural + Luhn + Shannon Entropy + WebGPU SLM)</span>
+            <span id="pii-redaction-count" class="badge">0 Redactions</span>
+            <span id="pii-risk-badge" class="badge badge-risk-safe">Risk: SAFE (0/100)</span>
+          </div>
+          <div class="btn-row">
+            <select id="pii-style-select" class="select-input" aria-label="Redaction Token Style">
+              <option value="token">Reversible Tokens ([SECRET_1], [CONN_URI_1])</option>
+              <option value="mask">Strict Mask ([REDACTED_SECRET])</option>
+            </select>
+            <label class="chip-label" title="Do not redact 127.0.0.1, 0.0.0.0, or localhost">
+              <input id="chk-preserve-localhost" type="checkbox" checked />
+              <span>Preserve Localhost (127.0.0.1)</span>
+            </label>
+            <button id="btn-load-sample-pii" class="btn">Reset Incident Sample</button>
+            <button id="btn-llm-pii-scan" class="btn btn-primary" title="Run in-browser WebGPU SLM to extract unlabeled contextual entities">
+              Deep Contextual Scan (WebGPU SLM)
+            </button>
+            <button id="btn-abort-llm" class="btn btn-danger" title="Interrupt in-flight WebGPU generation">
+              Stop
+            </button>
+          </div>
+        </div>
+
+        <div id="pii-category-chips" class="chip-grid"></div>
+
+        <div class="btn-row" style="margin-top: 0.25rem;">
+          <span style="font-size: 0.78rem; color: var(--text-muted);">Custom Blocklist (comma-separated codenames/domains):</span>
+          <input
+            id="custom-blocklist-input"
+            type="text"
+            class="text-input"
+            style="flex: 1; min-width: 240px;"
+            placeholder="e.g. Project Titan, acmecorp.internal, StealthProductX"
+            value="Project Titan, acmecorp.internal"
+          />
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Raw Code / .env / Logs / Prompt (Never Leaves Browser)</div>
+            <span class="badge">Real-Time Local Stream</span>
+          </div>
+          <textarea
+            id="pii-raw-input"
+            class="code-area"
+            placeholder="Paste .env configs, stack traces, SSH keys, database URIs, or customer emails..."
+          ></textarea>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Sanitized Output (Safe for ChatGPT / Claude / Cursor)</div>
+            <div class="btn-row">
+              <button id="btn-copy-scrubbed" class="btn btn-primary">Copy Safe Prompt</button>
+            </div>
+          </div>
+          <textarea
+            id="pii-scrubbed-output"
+            class="code-area"
+            readonly
+            placeholder="Sanitized output appears here..."
+          ></textarea>
+        </div>
+      </div>
+
+      <div class="workspace-grid" style="margin-top: 1.15rem;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Reversible Entity Vault (AES-256-GCM Lockable)</div>
+            <span class="badge">PBKDF2 + Web Crypto API</span>
+          </div>
+          <div class="btn-row">
+            <input
+              id="vault-passphrase-input"
+              type="password"
+              class="text-input"
+              placeholder="Vault Passphrase (min 4 chars)..."
+              value="localvault-secret-key"
+            />
+            <button id="btn-export-encrypted-vault" class="btn">
+              Export Encrypted .lvvault
+            </button>
+            <label class="btn" for="vault-import-file" style="cursor:pointer;">
+              Unlock &amp; Import .lvvault
+            </label>
+            <input id="vault-import-file" type="file" accept=".lvvault,.json" style="display:none;" />
+          </div>
+          <div class="vault-table-wrap">
+            <table class="vault-table">
+              <thead>
+                <tr>
+                  <th>Token</th>
+                  <th>Category</th>
+                  <th>Original Secret</th>
+                  <th>Entropy</th>
+                  <th>Hits</th>
+                </tr>
+              </thead>
+              <tbody id="pii-vault-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Fuzzy-Resilient LLM Response Re-Hydration</div>
+            <button id="btn-run-rehydrate" class="btn btn-primary">Restore Original Secrets</button>
+          </div>
+          <p style="font-size: 0.78rem; color: var(--text-muted);">
+            Automatically restores tokens even if the LLM altered casing or brackets (e.g. <code>[email_1]</code>, <code>{{SECRET_1}}</code>, or <code>CONN_URI-1</code>).
+          </p>
+          <textarea
+            id="rehydrate-input"
+            class="code-area"
+            style="min-height: 165px;"
+            placeholder="Paste the LLM reply containing [SECRET_1], [email_1], or {{CONN_URI_1}} here, then click 'Restore Original Secrets'..."
+          ></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-audio-studio" class="tab-panel">
+      <div class="card" style="margin-bottom: 1.15rem;">
+        <div class="card-header">
+          <div class="card-title">
+            <span>Step 1: 16kHz Mono Audio Capture, Synthetic Test Generator &amp; Whisper WebGPU</span>
+          </div>
+          <div class="btn-row">
+            <button id="btn-mic-record" class="btn">Record Microphone</button>
+            <label class="btn" for="audio-file-input" style="cursor:pointer;">
+              Upload Audio (.wav/.mp3/.m4a/.webm)
+            </label>
+            <input id="audio-file-input" type="file" accept="audio/*" style="display:none;" />
+            <button id="btn-synth-test-audio" class="btn" title="Generate 16kHz mono WAV signal in RAM without needing a microphone">
+              Synthesize 16kHz Test Audio
+            </button>
+            <button id="btn-download-wav" class="btn" disabled>
+              Export 16kHz .wav
+            </button>
+            <button id="btn-run-whisper" class="btn btn-primary" disabled>
+              Transcribe with Whisper (WebGPU)
+            </button>
+          </div>
+        </div>
+        <div class="btn-row">
+          <label class="chip-label">
+            <input id="chk-whisper-timestamps" type="checkbox" checked />
+            <span>Include Whisper Timestamps (<code>[00:00 -&gt; 00:05]</code>)</span>
+          </label>
+          <label class="chip-label" title="Automatically scrub emails, API keys, DB URIs, and names from the transcript before generating notes">
+            <input id="chk-auto-scrub-transcript" type="checkbox" checked />
+            <span>Auto-Scrub PII &amp; Secrets from Transcript Before Structuring Notes</span>
+          </label>
+          <button id="btn-demo-meeting" class="btn">Load Security Meeting Preset</button>
+          <button id="btn-demo-lecture" class="btn">Load CS Lecture Preset</button>
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Raw Audio Transcript</div>
+            <div class="btn-row">
+              <select id="note-mode-select" class="select-input" aria-label="Note Template Mode">
+                <option value="meeting">Meeting Decisions &amp; Action Items</option>
+                <option value="incident">Engineering Incident Post-Mortem</option>
+                <option value="lecture">Academic Lecture Synthesis</option>
+                <option value="executive">Executive Briefing</option>
+              </select>
+            </div>
+          </div>
+          <textarea
+            id="raw-transcript-input"
+            class="code-area"
+            placeholder="Transcribed speech or pasted meeting transcript..."
+          ></textarea>
+          <div class="btn-row">
+            <button id="btn-instant-structure" class="btn">
+              Instant Smart Structure (&lt;5ms)
+            </button>
+            <button id="btn-llm-structure" class="btn btn-primary">
+              Stream Deep Notes via WebGPU SLM
+            </button>
+            <button id="btn-abort-audio-llm" class="btn btn-danger">
+              Stop
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Structured &amp; Sanitized Markdown Notes</div>
+            <div class="btn-row">
+              <button id="btn-export-md" class="btn btn-primary">Download .md File</button>
+            </div>
+          </div>
+          <textarea
+            id="structured-notes-output"
+            class="code-area"
+            placeholder="Structured Markdown notes appear here..."
+          ></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-security-hardware" class="tab-panel">
+      <div class="card" style="margin-bottom: 1.15rem;">
+        <div class="card-header">
+          <div class="card-title">
+            <span>Verifiable Zero-Exfiltration Network Firewall Log</span>
+            <span id="firewall-log-count" class="badge">0 Events Logged</span>
+          </div>
+          <span class="badge badge-risk-safe">POST / PUT / Beacon Payloads Hard-Blocked</span>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted);">
+          Every <code>window.fetch</code>, <code>XMLHttpRequest</code>, and <code>navigator.sendBeacon</code> call is intercepted below. Flip the <strong>Air-Gap Lock</strong> in the header to block 100% of external network traffic once models are cached.
+        </p>
+        <div class="vault-table-wrap">
+          <table class="vault-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Method</th>
+                <th>Target URL</th>
+                <th>Firewall Verdict</th>
+              </tr>
+            </thead>
+            <tbody id="firewall-audit-tbody">
+              <tr>
+                <td colspan="4" style="color:#94a3b8;">Zero outbound network calls recorded.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom: 1.15rem;">
+        <div class="card-header">
+          <div class="card-title">Client GPU &amp; Isolation Telemetry</div>
+          <span class="badge">navigator.gpu + window.crossOriginIsolated</span>
+        </div>
+        <div class="specs-list">
+          <div class="spec-box">
+            <div class="spec-label">GPU Adapter / Vendor</div>
+            <div id="spec-gpu-vendor" class="spec-value">Detecting...</div>
+          </div>
+          <div class="spec-box">
+            <div class="spec-label">Compute Architecture</div>
+            <div id="spec-gpu-arch" class="spec-value">Detecting...</div>
+          </div>
+          <div class="spec-box">
+            <div class="spec-label">FP16 Shader Support</div>
+            <div id="spec-fp16" class="spec-value">Detecting...</div>
+          </div>
+          <div class="spec-box">
+            <div class="spec-label">COOP/COEP Isolation</div>
+            <div id="spec-coi-status" class="spec-value">Detecting...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Small Language Model (SLM) Engine</div>
+            <span class="badge">WebGPU Q4F16 / Q4</span>
+          </div>
+          <select id="slm-model-select" class="select-input">
+            <option value="HuggingFaceTB/SmolLM2-360M-Instruct">
+              HuggingFaceTB/SmolLM2-360M-Instruct (Fastest &bull; ~230 MB VRAM)
+            </option>
+            <option value="onnx-community/Qwen2.5-0.5B-Instruct">
+              onnx-community/Qwen2.5-0.5B-Instruct (High Reasoning &bull; ~350 MB VRAM)
+            </option>
+            <option value="HuggingFaceTB/SmolLM2-135M-Instruct">
+              HuggingFaceTB/SmolLM2-135M-Instruct (Ultra-Light &bull; ~95 MB VRAM)
+            </option>
+          </select>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Whisper Speech-to-Text Engine</div>
+            <span class="badge">Offline ASR</span>
+          </div>
+          <select id="whisper-model-select" class="select-input">
+            <option value="onnx-community/whisper-tiny.en">
+              onnx-community/whisper-tiny.en (Fastest English &bull; ~75 MB)
+            </option>
+            <option value="onnx-community/whisper-base.en">
+              onnx-community/whisper-base.en (Enhanced Accuracy &bull; ~145 MB)
+            </option>
+            <option value="onnx-community/whisper-small">
+              onnx-community/whisper-small (Multilingual &bull; ~380 MB)
+            </option>
+          </select>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+  </html>
+  
