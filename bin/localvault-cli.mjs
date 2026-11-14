@@ -1,44 +1,84 @@
 #!/usr/bin/env node
 /**
- * LocalVault AI — Developer CLI (Option B Terminal & CI/CD Utility)
+ * LocalVault AI v2.0 — Node.js Terminal & CI/CD CLI (bin/localvault-cli.mjs)
+ * Usage:
+ *   npm run cli -- scrub <file-or-text>
+ *   npm run cli -- structure <file-or-text> [--mode=meeting|lecture|incident|executive]
+ *   npm run cli -- entropy <token>
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { scrubText } from '../src/pii-engine.js';
-import { structureTranscriptInstant } from '../src/note-structurer.js';
+import { PIIEngine, calculateShannonEntropy } from '../src/pii-engine.js';
+import { structureTranscript } from '../src/note-structurer.js';
 
-const args = process.argv.slice(2);
-const command = (args[0] || 'help').toLowerCase();
-const target = args.slice(1).join(' ');
-
-function readTargetInput(inputStr) {
-  if (!inputStr) return '';
-  const resolved = path.resolve(process.cwd(), inputStr);
-  if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
-    return fs.readFileSync(resolved, 'utf-8');
+function resolveInput(targetArg) {
+  if (!targetArg) return '';
+  const candidatePath = path.resolve(process.cwd(), targetArg);
+  if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
+    return fs.readFileSync(candidatePath, 'utf8');
   }
-  return inputStr;
+  return targetArg;
 }
 
-if (command === 'scrub') {
-  const raw = readTargetInput(target) || 'User: Dr. Jane Doe (jane@acme.io), DB: postgres://admin:s3cr3tPass99@db.internal:5432/prod';
-  const result = scrubText(raw);
-  console.log('=== LocalVault CLI: 4-Layer PII & Secret Scrubbing ===');
-  console.log(`Risk Level: ${result.stats.risk.level} (${result.stats.risk.score}/100) | Redactions: ${result.stats.totalRedactions}`);
-  console.log('\n--- Sanitized Output ---');
-  console.log(result.scrubbedText);
-  console.log('\n--- Detected Entities ---');
-  for (const ent of result.entities) {
-    console.log(`  ${ent.token} -> [${ent.category}] (entropy: ${ent.entropy} bits/char, hits: ${ent.count}x)`);
+export function runCli(argv = process.argv.slice(2)) {
+  const [command, target, ...flags] = argv;
+  const engine = new PIIEngine();
+
+  if (!command || command === '--help' || command === '-h') {
+    const helpText = [
+      'LocalVault AI v2.0 CLI (Zero-Cloud PII Firewall & Note Structurer)',
+      '',
+      'Commands:',
+      '  localvault scrub <path-or-string>                 Run 4-layer PII & secret scrubber',
+      '  localvault structure <path-or-string> [--mode=X]  Structure transcript (meeting|lecture|incident|executive)',
+      '  localvault entropy <string>                       Compute Shannon entropy H(X) in bits/char'
+    ].join('\n');
+    console.log(helpText);
+    return { exitCode: 0, output: helpText };
   }
-} else if (command === 'structure') {
-  const raw = readTargetInput(target) || 'Welcome to the sprint planning meeting. We must deploy the WebGPU PII firewall by Friday. Are there any blockers?';
-  const notes = structureTranscriptInstant(raw, 'meeting');
-  console.log(notes);
-} else {
-  console.log(`LocalVault AI CLI v2.0
-Commands:
-  npm run cli -- scrub <file-or-string>      Scrub PII, API keys, DB URIs & high-entropy secrets
-  npm run cli -- structure <file-or-string>  Structure raw transcript into Markdown notes`);
+
+  if (command === 'scrub') {
+    const input = resolveInput(target);
+    const result = engine.scrub(input);
+    const output = JSON.stringify(
+      {
+        scrubbedText: result.scrubbedText,
+        stats: result.stats,
+        detections: result.detections
+      },
+      null,
+      2
+    );
+    console.log(output);
+    return { exitCode: 0, result };
+  }
+
+  if (command === 'structure') {
+    const input = resolveInput(target);
+    const modeFlag = flags.find((f) => f.startsWith('--mode='));
+    const mode = modeFlag ? modeFlag.split('=')[1] : 'meeting';
+    const result = structureTranscript(input, { mode, autoScrub: true, piiEngine: engine });
+    console.log(result.markdown);
+    return { exitCode: 0, result };
+  }
+
+  if (command === 'entropy') {
+    const h = calculateShannonEntropy(target || '');
+    console.log(`Shannon Entropy H(X): ${h} bits/char`);
+    return { exitCode: 0, entropy: h };
+  }
+
+  console.error(`Unknown command: ${command}`);
+  return { exitCode: 1 };
 }
+
+const isDirectExecution =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+
+if (isDirectExecution) {
+  const { exitCode } = runCli(process.argv.slice(2));
+  process.exit(exitCode);
+}
+
