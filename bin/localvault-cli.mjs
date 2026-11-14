@@ -1,6 +1,4 @@
 
-#!/usr/bin/env node
-
 /**
  * LocalVault AI v2.0 — Node.js CLI
  *
@@ -52,10 +50,6 @@ function printHelp() {
   ].join('\n');
 }
 
-/**
- * If the input names a regular file, read it as UTF-8.
- * Otherwise, treat the input as literal text.
- */
 function resolveInput(targetArg) {
   if (typeof targetArg !== 'string' || !targetArg.length) {
     return '';
@@ -108,14 +102,6 @@ function writeOutput(output, error = false) {
   }
 }
 
-/**
- * Run the CLI.
- *
- * Exported for automated tests.
- *
- * @param {string[]} argv
- * @returns {object}
- */
 export function runCli(argv = process.argv.slice(2)) {
   const [command, target, ...flags] = argv || [];
 
@@ -211,7 +197,11 @@ export function runCli(argv = process.argv.slice(2)) {
     throw new Error(`Unknown command: ${command}`);
   } catch (error) {
     const message = error?.message || String(error);
-    writeOutput(`LocalVault CLI error: ${message}`, true);
+
+    writeOutput(
+      `LocalVault CLI error: ${message}`,
+      true
+    );
 
     return {
       exitCode: 1,
