@@ -1,390 +1,73 @@
-
-/**
- * LocalVault AI v2.0 — Client-Side Audio Utilities
- *
- * Features:
- * - Deterministic synthetic audio generation
- * - Mono 16-bit PCM WAV encoding
- * - Browser WAV Blob export
- * - Audio resampling to 16kHz mono
- *
- * Note:
- * These utilities do not themselves record microphone audio.
- */
-
+/** Browser audio helpers. Whisper inputs are mono Float32 samples at 16 kHz. */
 export const WHISPER_SAMPLE_RATE = 16000;
+const MIN_RATE = 8000;
+const MAX_RATE = 192000;
+const MAX_SAMPLES = 30000000;
+const MAX_SECONDS = 600;
 
-const MIN_SAMPLE_RATE = 8000;
-const MAX_SAMPLE_RATE = 192000;
-const MAX_AUDIO_SAMPLES = 5000000;
-const MAX_DURATION_SECONDS = 600;
+function validateRate(rate) { if (!Number.isInteger(rate) || rate < MIN_RATE || rate > MAX_RATE) throw new RangeError(`Sample rate must be an integer between ${MIN_RATE} and ${MAX_RATE}.`); return rate; }
+function validateSamples(samples) { if (!(samples instanceof Float32Array)) throw new TypeError('Audio samples must be a Float32Array.'); if (!samples.length) throw new RangeError('Audio input cannot be empty.'); if (samples.length > MAX_SAMPLES) throw new RangeError('Audio exceeds the sample limit.'); for (const value of samples) if (!Number.isFinite(value)) throw new TypeError('Audio contains non-finite samples.'); }
 
-/**
- * Validate a sample rate.
- */
-function validateSampleRate(sampleRate) {
-  if (
-    !Number.isInteger(sampleRate) ||
-    sampleRate < MIN_SAMPLE_RATE ||
-    sampleRate > MAX_SAMPLE_RATE
-  ) {
-    throw new RangeError(
-      `Sample rate must be an integer between ${MIN_SAMPLE_RATE} and ${MAX_SAMPLE_RATE}.`
-    );
-  }
-
-  return sampleRate;
-}
-
-/**
- * Validate audio duration and calculate sample count.
- */
-function getSampleCount(durationSeconds, sampleRate) {
-  if (
-    !Number.isFinite(durationSeconds) ||
-    durationSeconds <= 0 ||
-    durationSeconds > MAX_DURATION_SECONDS
-  ) {
-    throw new RangeError(
-      `Audio duration must be greater than zero and no more than ${MAX_DURATION_SECONDS} seconds.`
-    );
-  }
-
-  const count = Math.floor(durationSeconds * sampleRate);
-
-  if (
-    !Number.isSafeInteger(count) ||
-    count < 1 ||
-    count > MAX_AUDIO_SAMPLES
-  ) {
-    throw new RangeError(
-      'Requested audio exceeds the supported sample limit.'
-    );
-  }
-
-  return count;
-}
-
-/**
- * Generate a deterministic synthetic mono waveform.
- *
- * The result is a test tone, not recorded speech.
- *
- * @param {object} [options]
- * @param {number} [options.durationSeconds=1.5]
- * @param {number} [options.sampleRate=16000]
- * @param {number} [options.frequencyHz=440]
- * @returns {Float32Array}
- */
 export function synthesizeTestAudioSamples(options = {}) {
-  const sampleRate = validateSampleRate(
-    Number(options.sampleRate ?? WHISPER_SAMPLE_RATE)
-  );
-
-  const durationSeconds = Number(
-    options.durationSeconds ?? 1.5
-  );
-
-  const frequencyHz = Number(
-    options.frequencyHz ?? 440
-  );
-
-  const totalSamples = getSampleCount(
-    durationSeconds,
-    sampleRate
-  );
-
-  if (
-    !Number.isFinite(frequencyHz) ||
-    frequencyHz <= 0 ||
-    frequencyHz >= sampleRate / 2
-  ) {
-    throw new RangeError(
-      'Frequency must be positive and below the Nyquist frequency.'
-    );
-  }
-
-  const samples = new Float32Array(totalSamples);
-
-  for (let i = 0; i < totalSamples; i++) {
-    const time = i / sampleRate;
-
-    const envelope = Math.sin(
-      Math.PI * (i / totalSamples)
-    );
-
-    const fundamental =
-      0.6 * Math.sin(2 * Math.PI * frequencyHz * time);
-
-    const harmonic =
-      0.25 * Math.sin(2 * Math.PI * frequencyHz * 1.5 * time);
-
-    samples[i] = envelope * (fundamental + harmonic);
-  }
-
+  const sampleRate = validateRate(Number(options.sampleRate ?? WHISPER_SAMPLE_RATE));
+  const durationSeconds = Number(options.durationSeconds ?? 1.5);
+  const frequencyHz = Number(options.frequencyHz ?? 440);
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_SECONDS) throw new RangeError(`Audio duration must be greater than zero and no more than ${MAX_SECONDS} seconds.`);
+  if (!Number.isFinite(frequencyHz) || frequencyHz <= 0 || frequencyHz >= sampleRate / 2) throw new RangeError('Frequency must be positive and below the Nyquist frequency.');
+  const count = Math.floor(durationSeconds * sampleRate);
+  if (!count || count > MAX_SAMPLES) throw new RangeError('Requested audio exceeds the sample limit.');
+  const samples = new Float32Array(count);
+  for (let i = 0; i < count; i++) { const t = i / sampleRate; const envelope = Math.sin(Math.PI * i / count); samples[i] = envelope * (0.6 * Math.sin(2 * Math.PI * frequencyHz * t) + 0.2 * Math.sin(4 * Math.PI * frequencyHz * t)); }
   return samples;
 }
 
-/**
- * Encode mono Float32 audio into a standard 16-bit PCM WAV file.
- *
- * @param {Float32Array} samples
- * @param {number} [sampleRate=16000]
- * @returns {Uint8Array}
- */
-export function encodeWavBytes(
-  samples,
-  sampleRate = WHISPER_SAMPLE_RATE
-) {
-  if (!(samples instanceof Float32Array)) {
-    throw new TypeError(
-      'encodeWavBytes expects a Float32Array.'
-    );
-  }
-
-  validateSampleRate(sampleRate);
-
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  const bytesPerSample = bitsPerSample / 8;
-
-  const dataByteLength = samples.length * bytesPerSample;
-
-  if (
-    !Number.isSafeInteger(dataByteLength) ||
-    dataByteLength > 0xffffffff - 36
-  ) {
-    throw new RangeError(
-      'Audio is too large for a standard WAV file.'
-    );
-  }
-
-  const buffer = new ArrayBuffer(44 + dataByteLength);
+export function encodeWavBytes(samples, sampleRate = WHISPER_SAMPLE_RATE) {
+  if (!(samples instanceof Float32Array)) throw new TypeError('encodeWavBytes expects a Float32Array.');
+  validateRate(sampleRate);
+  const dataLength = samples.length * 2;
+  if (!Number.isSafeInteger(dataLength) || dataLength > 0xffffffff - 36) throw new RangeError('Audio is too large for a WAV file.');
+  const buffer = new ArrayBuffer(44 + dataLength);
   const view = new DataView(buffer);
-
-  function writeAscii(offset, value) {
-    for (let i = 0; i < value.length; i++) {
-      view.setUint8(offset + i, value.charCodeAt(i));
-    }
-  }
-
-  // RIFF header.
-  writeAscii(0, 'RIFF');
-  view.setUint32(4, 36 + dataByteLength, true);
-  writeAscii(8, 'WAVE');
-
-  // Format chunk.
-  writeAscii(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(
-    28,
-    sampleRate * numChannels * bytesPerSample,
-    true
-  );
-  view.setUint16(32, numChannels * bytesPerSample, true);
-  view.setUint16(34, bitsPerSample, true);
-
-  // Data chunk.
-  writeAscii(36, 'data');
-  view.setUint32(40, dataByteLength, true);
-
-  let offset = 44;
-
-  for (let i = 0; i < samples.length; i++) {
-    const sample = Number.isFinite(samples[i])
-      ? Math.max(-1, Math.min(1, samples[i]))
-      : 0;
-
-    const pcmValue = sample < 0
-      ? Math.round(sample * 0x8000)
-      : Math.round(sample * 0x7fff);
-
-    view.setInt16(offset, pcmValue, true);
-    offset += bytesPerSample;
-  }
-
+  const ascii = (offset, value) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
+  ascii(0, 'RIFF'); view.setUint32(4, 36 + dataLength, true); ascii(8, 'WAVE');
+  ascii(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  ascii(36, 'data'); view.setUint32(40, dataLength, true);
+  for (let i = 0; i < samples.length; i++) { const sample = Math.max(-1, Math.min(1, samples[i])); view.setInt16(44 + i * 2, sample < 0 ? Math.round(sample * 32768) : Math.round(sample * 32767), true); }
   return new Uint8Array(buffer);
 }
+export function synthesizeTestWav(options = {}) { const sampleRate = validateRate(Number(options.sampleRate ?? WHISPER_SAMPLE_RATE)); const samples = synthesizeTestAudioSamples({ ...options, sampleRate }); return { samples, wavBytes: encodeWavBytes(samples, sampleRate), sampleRate, durationSeconds: samples.length / sampleRate }; }
+export function exportWavBlob(samples, sampleRate = WHISPER_SAMPLE_RATE) { if (typeof Blob === 'undefined') throw new Error('Blob is not supported in this environment.'); return new Blob([encodeWavBytes(samples, sampleRate)], { type: 'audio/wav' }); }
 
-/**
- * Generate a synthetic WAV file and its original samples.
- *
- * @param {object} [options]
- * @returns {{
- *   samples: Float32Array,
- *   wavBytes: Uint8Array,
- *   sampleRate: number,
- *   durationSeconds: number
- * }}
- */
-export function synthesizeTestWav(options = {}) {
-  const sampleRate = validateSampleRate(
-    Number(options.sampleRate ?? WHISPER_SAMPLE_RATE)
-  );
-
-  const durationSeconds = Number(
-    options.durationSeconds ?? 1.5
-  );
-
-  const samples = synthesizeTestAudioSamples({
-    ...options,
-    sampleRate,
-    durationSeconds
-  });
-
-  const wavBytes = encodeWavBytes(
-    samples,
-    sampleRate
-  );
-
-  return {
-    samples,
-    wavBytes,
-    sampleRate,
-    durationSeconds
-  };
-}
-
-/**
- * Export Float32 audio as a browser WAV Blob.
- *
- * @param {Float32Array} samples
- * @param {number} [sampleRate=16000]
- * @returns {Blob}
- */
-export function exportWavBlob(
-  samples,
-  sampleRate = WHISPER_SAMPLE_RATE
-) {
-  if (typeof Blob === 'undefined') {
-    throw new Error(
-      'Blob export is not supported in this environment.'
-    );
-  }
-
-  const wavBytes = encodeWavBytes(samples, sampleRate);
-
-  return new Blob(
-    [wavBytes],
-    { type: 'audio/wav' }
-  );
-}
-
-/**
- * Resample mono Float32 audio.
- *
- * Uses OfflineAudioContext where available.
- * Uses deterministic linear interpolation as a fallback.
- *
- * @param {Float32Array} inputSamples
- * @param {number} inputSampleRate
- * @param {number} [targetSampleRate=16000]
- * @returns {Promise<Float32Array>}
- */
-export async function resampleTo16kHzMono(
-  inputSamples,
-  inputSampleRate,
-  targetSampleRate = WHISPER_SAMPLE_RATE
-) {
-  if (!(inputSamples instanceof Float32Array)) {
-    throw new TypeError(
-      'Input audio must be a Float32Array.'
-    );
-  }
-
-  validateSampleRate(inputSampleRate);
-  validateSampleRate(targetSampleRate);
-
-  if (inputSamples.length === 0) {
-    throw new RangeError('Input audio cannot be empty.');
-  }
-
-  if (inputSamples.length > MAX_AUDIO_SAMPLES) {
-    throw new RangeError('Input audio exceeds the sample limit.');
-  }
-
-  for (let i = 0; i < inputSamples.length; i++) {
-    if (!Number.isFinite(inputSamples[i])) {
-      throw new TypeError(
-        'Input audio contains non-finite samples.'
-      );
-    }
-  }
-
-  if (inputSampleRate === targetSampleRate) {
-    return new Float32Array(inputSamples);
-  }
-
-  const targetLength = Math.max(
-    1,
-    Math.round(
-      inputSamples.length * targetSampleRate / inputSampleRate
-    )
-  );
-
-  if (targetLength > MAX_AUDIO_SAMPLES) {
-    throw new RangeError('Resampled audio exceeds the sample limit.');
-  }
-
-  const OfflineContext =
-    globalThis.OfflineAudioContext ||
-    globalThis.webkitOfflineAudioContext;
-
+export async function resampleTo16kHzMono(inputSamples, inputSampleRate, targetSampleRate = WHISPER_SAMPLE_RATE) {
+  validateSamples(inputSamples); validateRate(inputSampleRate); validateRate(targetSampleRate);
+  if (inputSampleRate === targetSampleRate) return new Float32Array(inputSamples);
+  const outputLength = Math.max(1, Math.round(inputSamples.length * targetSampleRate / inputSampleRate));
+  if (outputLength > MAX_SAMPLES) throw new RangeError('Resampled audio exceeds the sample limit.');
+  const OfflineContext = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext;
   if (typeof OfflineContext === 'function') {
-    try {
-      const context = new OfflineContext(
-        1,
-        targetLength,
-        targetSampleRate
-      );
-
-      const audioBuffer = context.createBuffer(
-        1,
-        inputSamples.length,
-        inputSampleRate
-      );
-
-      audioBuffer.getChannelData(0).set(inputSamples);
-
-      const source = context.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(context.destination);
-      source.start(0);
-
-      const rendered = await context.startRendering();
-
-      return new Float32Array(
-        rendered.getChannelData(0)
-      );
-    } catch {
-      // Use deterministic interpolation if browser resampling fails.
-    }
+    try { const context = new OfflineContext(1, outputLength, targetSampleRate); const buffer = context.createBuffer(1, inputSamples.length, inputSampleRate); buffer.getChannelData(0).set(inputSamples); const source = context.createBufferSource(); source.buffer = buffer; source.connect(context.destination); source.start(0); const rendered = await context.startRendering(); return new Float32Array(rendered.getChannelData(0)); } catch { /* deterministic interpolation below */ }
   }
-
-  // Linear interpolation fallback.
-  const output = new Float32Array(targetLength);
-
-  const ratio =
-    (inputSamples.length - 1) /
-    Math.max(1, targetLength - 1);
-
-  for (let i = 0; i < targetLength; i++) {
-    const position = i * ratio;
-    const index = Math.floor(position);
-    const fraction = position - index;
-
-    const nextIndex = Math.min(
-      inputSamples.length - 1,
-      index + 1
-    );
-
-    output[i] =
-      inputSamples[index] * (1 - fraction) +
-      inputSamples[nextIndex] * fraction;
-  }
-
+  const output = new Float32Array(outputLength); const ratio = (inputSamples.length - 1) / Math.max(1, outputLength - 1);
+  for (let i = 0; i < outputLength; i++) { const pos = i * ratio; const index = Math.floor(pos); const fraction = pos - index; output[i] = inputSamples[index] * (1 - fraction) + inputSamples[Math.min(index + 1, inputSamples.length - 1)] * fraction; }
   return output;
+}
+
+export async function decodeAudioFile(file, audioContext = null) {
+  if (!file || typeof file.arrayBuffer !== 'function') throw new TypeError('Choose a supported audio file.');
+  if (file.size > 50 * 1024 * 1024) throw new RangeError('Audio file is larger than the 50 MB limit.');
+  const AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!audioContext && typeof AudioContextCtor !== 'function') throw new Error('Web Audio is not supported in this browser.');
+  const context = audioContext || new AudioContextCtor();
+  try {
+    const decoded = await context.decodeAudioData(await file.arrayBuffer());
+    if (!decoded.numberOfChannels || !decoded.length) throw new Error('The selected audio file contains no audio samples.');
+    if (decoded.duration > MAX_SECONDS) throw new RangeError(`Audio must be no longer than ${MAX_SECONDS} seconds.`);
+    const mono = new Float32Array(decoded.length);
+    for (let channel = 0; channel < decoded.numberOfChannels; channel++) { const data = decoded.getChannelData(channel); for (let i = 0; i < data.length; i++) mono[i] += data[i] / decoded.numberOfChannels; }
+    const samples = await resampleTo16kHzMono(mono, decoded.sampleRate, WHISPER_SAMPLE_RATE);
+    return { samples, sampleRate: WHISPER_SAMPLE_RATE, durationSeconds: samples.length / WHISPER_SAMPLE_RATE };
+  } finally {
+    if (!audioContext && context.state !== 'closed') await context.close().catch(() => {});
+  }
 }
