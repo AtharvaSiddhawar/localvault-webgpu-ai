@@ -174,7 +174,7 @@ await runTest('5. Fuzzy-Resilient Re-Hydration Across LLM Placeholder Mutations'
   );
 });
 
-await runTest('6. Zero-Knowledge AES-256-GCM + PBKDF2-SHA256 (100k Iterations) Crypto Vault', async () => {
+await runTest('6. Zero-Knowledge AES-256-GCM + PBKDF2-SHA256 (310k Iterations) Crypto Vault', async () => {
   const vault = new CryptoVault();
   const secretData = { '[EMAIL_1]': 'founder@localvault.ai', '[AWS_KEY_1]': 'AKIAIOSFODNN7EXAMPLE' };
   const envelope = await vault.lock(secretData, 'CorrectHorseBatteryStaple!99');
@@ -182,7 +182,7 @@ await runTest('6. Zero-Knowledge AES-256-GCM + PBKDF2-SHA256 (100k Iterations) C
   assert.equal(envelope.magic, 'LVVAULT_V2');
   assert.equal(envelope.kdf, 'PBKDF2-SHA256');
   assert.equal(envelope.cipher, 'AES-256-GCM');
-  assert.equal(envelope.iterations, 100000);
+  assert.equal(envelope.iterations, 350000);
 
   const decrypted = await vault.unlock(envelope, 'CorrectHorseBatteryStaple!99');
   assert.deepEqual(decrypted, secretData);
@@ -190,7 +190,7 @@ await runTest('6. Zero-Knowledge AES-256-GCM + PBKDF2-SHA256 (100k Iterations) C
   // Wrong passphrase must fail authentication
   await assert.rejects(
     async () => decryptVault(envelope, 'WrongPassphrase'),
-    /Vault decryption failed/
+    /Vault authentication failed/
   );
 });
 
