@@ -1,220 +1,74 @@
-
-/**
- * LocalVault AI v2.0 — Node.js CLI
- *
- * Usage:
- *   npm run cli -- scrub <file-or-text>
- *   npm run cli -- structure <file-or-text> --mode=meeting
- *   npm run cli -- entropy <string>
- */
-
+#!/usr/bin/env node
+/** LocalVault command-line companion. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import {
-  PIIEngine,
-  calculateShannonEntropy
-} from '../src/pii-engine.js';
-
-import {
-  structureTranscript,
-  SUPPORTED_NOTE_MODES
-} from '../src/note-structurer.js';
+import { PIIEngine, calculateShannonEntropy } from '../src/pii-engine.js';
+import { structureTranscript, SUPPORTED_NOTE_MODES } from '../src/note-structurer.js';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
-
-function printHelp() {
+function helpText() {
   return [
-    'LocalVault AI v2.0 CLI',
-    '',
+    'LocalVault AI v2.1 CLI', '',
     'Commands:',
-    '  localvault scrub <path-or-text>',
-    '      Detect and replace supported PII and secret patterns.',
-    '',
-    '  localvault structure <path-or-text> [--mode=MODE]',
-    '      Structure text into Markdown.',
-    '      Modes: meeting, lecture, incident, executive',
-    '',
-    '  localvault entropy <string>',
-    '      Calculate Shannon entropy in bits per character.',
-    '',
-    '  localvault --help',
-    '      Show this help message.',
-    '',
+    '  localvault scrub <file-path-or-literal-text>',
+    '  localvault structure <file-path-or-literal-text> [--mode=meeting|lecture|incident|executive]',
+    '  localvault entropy <text>',
+    '  localvault --help', '',
     'Examples:',
     '  npm run cli -- scrub .env',
-    '  npm run cli -- scrub "Email alice@example.com"',
+    '  npm run cli -- scrub "Contact alex@example.org"',
     '  npm run cli -- structure notes.txt --mode=incident',
-    '  npm run cli -- entropy "example-token-123"'
+    '  npm run cli -- entropy "sample-token-123"'
   ].join('\n');
 }
-
-function resolveInput(targetArg) {
-  if (typeof targetArg !== 'string' || !targetArg.length) {
-    return '';
-  }
-
-  const candidatePath = path.resolve(
-    process.cwd(),
-    targetArg
-  );
-
-  try {
-    if (
-      fs.existsSync(candidatePath) &&
-      fs.statSync(candidatePath).isFile()
-    ) {
-      return fs.readFileSync(candidatePath, 'utf8');
-    }
-  } catch (error) {
-    throw new Error(
-      `Could not read input file: ${error.message}`
-    );
-  }
-
-  return targetArg;
+function resolveInput(target) {
+  if (typeof target !== 'string' || !target.length) throw new Error('Provide a file path or text input.');
+  const candidate = path.resolve(process.cwd(), target);
+  try { if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return fs.readFileSync(candidate, 'utf8'); }
+  catch (error) { throw new Error(`Could not read input file: ${error.message}`); }
+  return target;
 }
-
+function write(output, isError = false) { (isError ? console.error : console.log)(output); }
 function parseMode(flags) {
-  const modeFlag = flags.find(
-    flag => flag.startsWith('--mode=')
-  );
-
-  const mode = modeFlag
-    ? modeFlag.slice('--mode='.length).trim()
-    : 'meeting';
-
-  if (!SUPPORTED_NOTE_MODES.includes(mode)) {
-    throw new Error(
-      `Unsupported note mode "${mode}". Use: ${SUPPORTED_NOTE_MODES.join(', ')}.`
-    );
-  }
-
+  const flag = flags.find((value) => value.startsWith('--mode='));
+  const mode = flag ? flag.slice(7) : 'meeting';
+  if (!SUPPORTED_NOTE_MODES.includes(mode)) throw new Error(`Unsupported mode "${mode}". Choose ${SUPPORTED_NOTE_MODES.join(', ')}.`);
   return mode;
 }
 
-function writeOutput(output, error = false) {
-  if (error) {
-    console.error(output);
-  } else {
-    console.log(output);
-  }
-}
-
 export function runCli(argv = process.argv.slice(2)) {
-  const [command, target, ...flags] = argv || [];
-
-  if (
-    !command ||
-    command === '--help' ||
-    command === '-h' ||
-    command === 'help'
-  ) {
-    const output = printHelp();
-    writeOutput(output);
-
-    return {
-      exitCode: 0,
-      output
-    };
+  const [command, target, ...flags] = Array.isArray(argv) ? argv : [];
+  if (!command || ['--help', '-h', 'help'].includes(command)) {
+    const output = helpText(); write(output); return { exitCode: 0, output };
   }
-
-  const engine = new PIIEngine();
-
   try {
     if (command === 'scrub') {
-      if (!target) {
-        throw new Error(
-          'Provide a file path or text to scrub.'
-        );
-      }
-
       const input = resolveInput(target);
-      const result = engine.scrub(input);
-
-      const output = JSON.stringify(
-        {
-          scrubbedText: result.scrubbedText,
-          stats: result.stats,
-          detections: result.detections
-        },
-        null,
-        2
-      );
-
-      writeOutput(output);
-
-      return {
-        exitCode: 0,
-        result
-      };
+      const result = new PIIEngine().scrub(input);
+      const output = JSON.stringify({ scrubbedText: result.scrubbedText, stats: result.stats, detections: result.detections }, null, 2);
+      write(output); return { exitCode: 0, output, result };
     }
-
     if (command === 'structure') {
-      if (!target) {
-        throw new Error(
-          'Provide a file path or text to structure.'
-        );
-      }
-
       const input = resolveInput(target);
-      const mode = parseMode(flags);
-
-      const result = structureTranscript(input, {
-        mode,
-        autoScrub: true,
-        piiEngine: engine
-      });
-
-      writeOutput(result.markdown);
-
-      return {
-        exitCode: 0,
-        result
-      };
+      const result = structureTranscript(input, { mode: parseMode(flags), autoScrub: true });
+      write(result.markdown); return { exitCode: 0, output: result.markdown, result };
     }
-
     if (command === 'entropy') {
-      if (!target) {
-        throw new Error(
-          'Provide a string to calculate entropy.'
-        );
-      }
-
+      if (typeof target !== 'string' || !target.length) throw new Error('Provide text for entropy calculation.');
       const entropy = calculateShannonEntropy(target);
-      const output =
-        `Shannon Entropy H(X): ${entropy} bits/char`;
-
-      writeOutput(output);
-
-      return {
-        exitCode: 0,
-        entropy
-      };
+      const output = `Shannon entropy: ${entropy} bits per character`;
+      write(output); return { exitCode: 0, output, entropy };
     }
-
     throw new Error(`Unknown command: ${command}`);
   } catch (error) {
     const message = error?.message || String(error);
-
-    writeOutput(
-      `LocalVault CLI error: ${message}`,
-      true
-    );
-
-    return {
-      exitCode: 1,
-      error: message
-    };
+    const output = `LocalVault CLI error: ${message}`;
+    write(output, true); return { exitCode: 1, output, error: message };
   }
 }
 
-const isDirectExecution =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(SCRIPT_PATH);
-
-if (isDirectExecution) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(SCRIPT_PATH)) {
   const result = runCli(process.argv.slice(2));
   process.exitCode = result.exitCode;
 }
