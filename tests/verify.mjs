@@ -877,7 +877,8 @@ await runTest(
       [0, 0.25, -0.25]
     );
 
-    assert.throws(
+    // resampleTo16kHzMono is async, so expect a rejected Promise.
+    await assert.rejects(
       () => resampleTo16kHzMono(
         new Float32Array(0),
         16000,
