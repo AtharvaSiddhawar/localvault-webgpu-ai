@@ -1,73 +1,64 @@
-{
-name: "CI Verification & GitHub Pages Deploy",
-on: {
-push: { branches: ["main", "master"] },
-pull_request: { branches: ["main", "master"] },
-workflow_dispatch: null
-},
-permissions: {
-contents: "read",
-pages: "write",
-id-token: "write"
-},
-concurrency: {
-group: "pages",
-cancel-in-progress: false
-},
-jobs: {
-verify-and-build: {
-runs-on: "ubuntu-24.04",
-steps: [
-{
-name: "Checkout repository",
-uses: "actions/checkout@v4"
-},
-{
-name: "Setup Node.js 22",
-uses: "actions/setup-node@v4",
-with: { node-version: "22" }
-},
-{
-name: "Ensure .gitignore exists & Install dependencies (No Lockfile Required)",
-run: "[ -f .gitignore ] || printf 'node_modules/\ndist/\n*.lvvault\n.DS_Store\n' > .gitignore && npm install --no-package-lock"
-},
-{
-name: "Run 4-Layer PII, Crypto, Audio & CLI Verification Suite",
-run: "npm test"
-},
-{
-name: "Build production Vite bundle",
-run: "npm run build"
-},
-{
-name: "Configure GitHub Pages",
-if: "github.event_name == 'push'",
-uses: "actions/configure-pages@v5",
-with: { enablement: true }
-},
-{
-name: "Upload Pages Artifact",
-if: "github.event_name == 'push'",
-uses: "actions/upload-pages-artifact@v3",
-with: { path: "./dist" }
-}
-]
-},
-deploy: {
-if: "github.event_name == 'push'",
-environment: {
-name: "github-pages",
-url: "${{ steps.deployment.outputs.page_url }}"
-},
-runs-on: "ubuntu-24.04",
-needs: "verify-and-build",
-steps: [
-{
-name: "Deploy to GitHub Pages",
-id: "deployment",
-uses: "actions/deploy-pages@v4"
-}
-]
-}
-}
-}
+on:
+  push:
+    branches:
+      - mainname: Verify & Deploy LocalVault AI v2.0 to GitHub Pages
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 24 LTS
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run 16-file regression verification suite
+        run: npm test
+
+      - name: Build production WebGPU bundle with Vite
+        run: npm run build
+
+      - name: Copy COI Service Worker to dist root
+        run: |
+          if [ -f public/coi-serviceworker.js ] && [ ! -f dist/coi-serviceworker.js ]; then
+            cp public/coi-serviceworker.js dist/coi-serviceworker.js
+          fi
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./dist
+
+  deploy:
+    needs: verify-and-build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
