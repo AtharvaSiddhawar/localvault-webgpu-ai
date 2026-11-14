@@ -1,71 +1,124 @@
+
 /**
- * LocalVault AI v2.0 — Zero-Knowledge Cryptographic Vault (src/crypto-vault.js)
- * Uses native Web Crypto API (PBKDF2-SHA256 with 100,000 iterations + AES-256-GCM)
- * Compatible with Browser (window.crypto.subtle) and Node.js 18–24+ (globalThis.crypto.subtle / node:crypto.webcrypto).
+ * LocalVault AI — Secure Cryptographic Vault
+ * PBKDF2-SHA256 + AES-256-GCM using Web Crypto.
+ *
+ * New vaults: 310,000 PBKDF2 iterations.
+ * Older supported v2 vaults remain readable.
+ * No default password is ever supplied.
  */
 
 const VAULT_MAGIC = 'LVVAULT_V2';
-const PBKDF2_ITERATIONS = 100000;
+const VAULT_VERSION = '2.1.0';
+const PBKDF2_ITERATIONS = 310000;
+const MIN_ACCEPTED_ITERATIONS = 100000;
+const MAX_ACCEPTED_ITERATIONS = 2000000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 
 let cachedWebCrypto = null;
 
 async function getWebCrypto() {
-  if (cachedWebCrypto) return cachedWebCrypto;
-  if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+  if (cachedWebCrypto?.subtle) return cachedWebCrypto;
+
+  if (globalThis.crypto?.subtle) {
     cachedWebCrypto = globalThis.crypto;
     return cachedWebCrypto;
   }
+
   try {
-    const nodeCryptoSpec = 'node:' + 'crypto';
-    const mod = await import(/* @vite-ignore */ nodeCryptoSpec);
-    if (mod?.webcrypto?.subtle) {
-      cachedWebCrypto = mod.webcrypto;
+    const cryptoModule = await import('node:crypto');
+    if (cryptoModule.webcrypto?.subtle) {
+      cachedWebCrypto = cryptoModule.webcrypto;
       return cachedWebCrypto;
     }
   } catch {
-    // Ignore in pure browser environments
+    // Node.js fallback unavailable in browsers.
   }
-  throw new Error('Web Crypto API (crypto.subtle) is not available in this runtime.');
+
+  throw new Error(
+    'Secure Web Crypto is unavailable. Use HTTPS or a supported secure browser.'
+  );
+}
+
+function validatePassphrase(passphrase) {
+  if (typeof passphrase !== 'string' || !passphrase.trim()) {
+    throw new Error('Enter a master passphrase. No default password is allowed.');
+  }
+
+  if (passphrase.length < 12) {
+    throw new Error('Use a passphrase with at least 12 characters.');
+  }
+
+  if (passphrase.length > 1024) {
+    throw new Error('Passphrase is too long.');
+  }
 }
 
 function bytesToBase64(bytes) {
   if (typeof Buffer !== 'undefined') {
     return Buffer.from(bytes).toString('base64');
   }
+
   let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
+  for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
+
   return btoa(binary);
 }
 
-function base64ToBytes(base64) {
-  if (typeof Buffer !== 'undefined') {
-    return new Uint8Array(Buffer.from(base64, 'base64'));
+function base64ToBytes(value, expectedLength, fieldName) {
+  if (typeof value !== 'string' || !value) {
+    throw new Error(`Vault file is missing ${fieldName}.`);
   }
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+
+  let bytes;
+
+  try {
+    if (typeof Buffer !== 'undefined') {
+      bytes = new Uint8Array(Buffer.from(value, 'base64'));
+    } else {
+      const binary = atob(value);
+      bytes = new Uint8Array(binary.length);
+
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+    }
+  } catch {
+    throw new Error(`Vault file contains invalid ${fieldName}.`);
   }
+
+  if (bytes.length !== expectedLength) {
+    throw new Error(`Vault file has an invalid ${fieldName} length.`);
+  }
+
   return bytes;
 }
 
-/**
- * Derive a 256-bit AES-GCM CryptoKey from a passphrase using PBKDF2-SHA256 (100,000 iterations).
- * @param {string} passphrase
- * @param {Uint8Array} salt
- * @param {number} [iterations=100000]
- * @returns {Promise<CryptoKey>}
- */
-export async function deriveVaultKey(passphrase, salt, iterations = PBKDF2_ITERATIONS) {
-  if (!passphrase || typeof passphrase !== 'string') {
-    throw new Error('A non-empty passphrase is required for PBKDF2 key derivation.');
+export async function deriveVaultKey(
+  passphrase,
+  salt,
+  iterations = PBKDF2_ITERATIONS
+) {
+  validatePassphrase(passphrase);
+
+  if (!(salt instanceof Uint8Array) || salt.length !== SALT_BYTES) {
+    throw new Error('Invalid vault salt.');
   }
+
+  if (
+    !Number.isSafeInteger(iterations) ||
+    iterations < MIN_ACCEPTED_ITERATIONS ||
+    iterations > MAX_ACCEPTED_ITERATIONS
+  ) {
+    throw new Error('Unsupported or unsafe PBKDF2 iteration count.');
+  }
+
   const webCrypto = await getWebCrypto();
   const encoder = new TextEncoder();
+
   const keyMaterial = await webCrypto.subtle.importKey(
     'raw',
     encoder.encode(passphrase),
@@ -88,33 +141,37 @@ export async function deriveVaultKey(passphrase, salt, iterations = PBKDF2_ITERA
   );
 }
 
-/**
- * Encrypt arbitrary JSON-serializable vault data into an authenticated .lvvault envelope.
- * @param {object|string} payload
- * @param {string} passphrase
- * @returns {Promise<object>} Encrypted .lvvault envelope
- */
 export async function encryptVault(payload, passphrase) {
+  validatePassphrase(passphrase);
+
+  if (payload === undefined) {
+    throw new Error('There is no data to encrypt.');
+  }
+
   const webCrypto = await getWebCrypto();
   const salt = webCrypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = webCrypto.getRandomValues(new Uint8Array(IV_BYTES));
+
   const key = await deriveVaultKey(passphrase, salt, PBKDF2_ITERATIONS);
 
-  const encoder = new TextEncoder();
   const serialized = JSON.stringify({
     data: payload,
     timestamp: new Date().toISOString()
   });
 
+  if (typeof serialized !== 'string') {
+    throw new Error('Vault data could not be serialized.');
+  }
+
   const ciphertextBuffer = await webCrypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
+    { name: 'AES-GCM', iv, tagLength: 128 },
     key,
-    encoder.encode(serialized)
+    new TextEncoder().encode(serialized)
   );
 
   return {
     magic: VAULT_MAGIC,
-    version: '2.0.0',
+    version: VAULT_VERSION,
     kdf: 'PBKDF2-SHA256',
     cipher: 'AES-256-GCM',
     iterations: PBKDF2_ITERATIONS,
@@ -125,51 +182,118 @@ export async function encryptVault(payload, passphrase) {
   };
 }
 
-/**
- * Decrypt and authenticate a .lvvault envelope using the provided passphrase.
- * Throws if passphrase is wrong or ciphertext/IV/salt has been tampered with.
- * @param {object|string} envelopeInput
- * @param {string} passphrase
- * @returns {Promise<any>} Original decrypted payload
- */
-export async function decryptVault(envelopeInput, passphrase) {
-  const webCrypto = await getWebCrypto();
-  const envelope =
-    typeof envelopeInput === 'string' ? JSON.parse(envelopeInput) : envelopeInput;
-
-  if (!envelope || envelope.magic !== VAULT_MAGIC) {
-    throw new Error('Invalid .lvvault file format or unsupported vault header.');
+function validateEnvelope(envelope) {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
+    throw new Error('Invalid vault file.');
   }
 
-  const salt = base64ToBytes(envelope.salt);
-  const iv = base64ToBytes(envelope.iv);
-  const ciphertext = base64ToBytes(envelope.ciphertext);
-  const iterations = Number(envelope.iterations) || PBKDF2_ITERATIONS;
+  if (envelope.magic !== VAULT_MAGIC) {
+    throw new Error('Unsupported vault file format.');
+  }
 
-  const key = await deriveVaultKey(passphrase, salt, iterations);
+  if (envelope.kdf !== 'PBKDF2-SHA256') {
+    throw new Error('Unsupported vault key-derivation algorithm.');
+  }
 
-  let decryptedBuffer;
+  if (envelope.cipher !== 'AES-256-GCM') {
+    throw new Error('Unsupported vault encryption algorithm.');
+  }
+
+  if (
+    !Number.isSafeInteger(envelope.iterations) ||
+    envelope.iterations < MIN_ACCEPTED_ITERATIONS ||
+    envelope.iterations > MAX_ACCEPTED_ITERATIONS
+  ) {
+    throw new Error('Invalid or unsafe PBKDF2 iteration count.');
+  }
+
+  const salt = base64ToBytes(envelope.salt, SALT_BYTES, 'salt');
+  const iv = base64ToBytes(envelope.iv, IV_BYTES, 'initialization vector');
+
+  if (
+    typeof envelope.ciphertext !== 'string' ||
+    envelope.ciphertext.length < 24 ||
+    envelope.ciphertext.length > 100000000
+  ) {
+    throw new Error('Invalid or oversized vault ciphertext.');
+  }
+
+  let ciphertext;
+
   try {
-    decryptedBuffer = await webCrypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      ciphertext
-    );
+    if (typeof Buffer !== 'undefined') {
+      ciphertext = new Uint8Array(Buffer.from(envelope.ciphertext, 'base64'));
+    } else {
+      const binary = atob(envelope.ciphertext);
+      ciphertext = new Uint8Array(binary.length);
+
+      for (let i = 0; i < binary.length; i++) {
+        ciphertext[i] = binary.charCodeAt(i);
+      }
+    }
   } catch {
-    throw new Error('Vault decryption failed: invalid passphrase or tampered ciphertext.');
+    throw new Error('Vault ciphertext is not valid Base64.');
   }
 
-  const decoder = new TextDecoder();
-  const parsed = JSON.parse(decoder.decode(decryptedBuffer));
-  return parsed.data;
+  if (ciphertext.length < 16) {
+    throw new Error('Vault ciphertext is incomplete.');
+  }
+
+  return { salt, iv, ciphertext, iterations: envelope.iterations };
 }
 
-/**
- * Serialize an encrypted vault envelope to a formatted .lvvault JSON string.
- * @param {object} envelope
- * @returns {string}
- */
+export async function decryptVault(envelopeInput, passphrase) {
+  validatePassphrase(passphrase);
+
+  let envelope;
+
+  try {
+    envelope = typeof envelopeInput === 'string'
+      ? JSON.parse(envelopeInput)
+      : envelopeInput;
+  } catch {
+    throw new Error('Vault file is not valid JSON.');
+  }
+
+  const validated = validateEnvelope(envelope);
+  const webCrypto = await getWebCrypto();
+
+  const key = await deriveVaultKey(
+    passphrase,
+    validated.salt,
+    validated.iterations
+  );
+
+  let decryptedBuffer;
+
+  try {
+    decryptedBuffer = await webCrypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: validated.iv, tagLength: 128 },
+      key,
+      validated.ciphertext
+    );
+  } catch {
+    throw new Error(
+      'Vault authentication failed. Check the passphrase or file integrity.'
+    );
+  }
+
+  try {
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    const parsed = JSON.parse(decoder.decode(decryptedBuffer));
+
+    if (!parsed || !Object.prototype.hasOwnProperty.call(parsed, 'data')) {
+      throw new Error('Missing vault payload.');
+    }
+
+    return parsed.data;
+  } catch {
+    throw new Error('Decrypted vault payload is invalid.');
+  }
+}
+
 export function serializeVaultFile(envelope) {
+  validateEnvelope(envelope);
   return JSON.stringify(envelope, null, 2);
 }
 
@@ -181,23 +305,45 @@ export class CryptoVault {
   }
 
   async lock(data, passphrase) {
-    this.activeEnvelope = await encryptVault(data, passphrase);
+    const envelope = await encryptVault(data, passphrase);
+
+    this.activeEnvelope = envelope;
     this.unlockedData = null;
     this.locked = true;
-    return this.activeEnvelope;
+
+    return envelope;
   }
 
   async unlock(envelope, passphrase) {
-    const data = await decryptVault(envelope || this.activeEnvelope, passphrase);
+    const source = envelope || this.activeEnvelope;
+
+    if (!source) {
+      throw new Error('No vault file is available to unlock.');
+    }
+
+    const data = await decryptVault(source, passphrase);
+
+    this.activeEnvelope = typeof source === 'string'
+      ? JSON.parse(source)
+      : source;
+
     this.unlockedData = data;
     this.locked = false;
+
     return data;
   }
 
   exportLvVault(envelope = this.activeEnvelope) {
     if (!envelope) {
-      throw new Error('No encrypted vault envelope available to export.');
+      throw new Error('No encrypted vault is available to export.');
     }
+
     return serializeVaultFile(envelope);
+  }
+
+  clear() {
+    this.unlockedData = null;
+    this.activeEnvelope = null;
+    this.locked = true;
   }
 }
